@@ -8,6 +8,15 @@ interface Props {
   /** Opens the merge modal. For non-revisions it's a trivial replace;
    * for revisions it runs the 3-way Claude merge with a preview. */
   onMerge: () => void;
+  /** Discards the local copy and replaces it wholesale with the
+   * upstream file — no Claude call, no token cost. Comments are
+   * re-anchored the same way the merge path does it. Confirmation
+   * lives in the caller (a styled dialog), because the local content
+   * is lost. Same canSync gating as onMerge. */
+  onReplace: () => void;
+  /** True while the replace request is in flight, so the button can
+   * show progress and both actions can be disabled. */
+  replacing?: boolean;
   /** Opens the Ignore-this-drift confirmation modal. Dismissed drifts
    * stay suppressed until a *newer* upstream SHA appears. Same gating
    * as onMerge — surfaced only when canSync is true. */
@@ -27,6 +36,8 @@ export default function SourceDriftBanner({
   driftedAt,
   canSync,
   onMerge,
+  onReplace,
+  replacing = false,
   onIgnore,
   isRevision,
 }: Props) {
@@ -66,7 +77,9 @@ export default function SourceDriftBanner({
               has new commits since it was generated. The merge runs a
               Claude-powered 3-way reconciliation so both the upstream edits
               and your AI revision land in the result. You'll get a diff
-              preview before anything is saved.
+              preview before anything is saved. If you'd rather drop the
+              revision and take the upstream file as-is, use{" "}
+              <em>Replace with latest</em>.
             </>
           ) : (
             <>
@@ -74,15 +87,17 @@ export default function SourceDriftBanner({
               Merge to pull in the latest version — comments are re-anchored
               automatically where the original quoted text still appears; the
               rest surface as orphans below the doc with a manual re-anchor
-              flow.
+              flow. <em>Replace with latest</em> does the same thing without
+              the Claude call — the upstream file is taken verbatim.
             </>
           )}
         </div>
-        <div className="mt-2 flex items-center gap-2">
+        <div className="mt-2 flex items-center gap-2 flex-wrap">
           {canSync && (
             <button
               onClick={onMerge}
-              className="text-xs px-3 py-1 rounded font-medium transition-colors"
+              disabled={replacing}
+              className="text-xs px-3 py-1 rounded font-medium transition-colors disabled:opacity-60"
               style={{
                 backgroundColor: "var(--color-warn-action)",
                 color: "var(--color-warn-action-fg)",
@@ -99,6 +114,24 @@ export default function SourceDriftBanner({
               Merge changes from GitHub
             </button>
           )}
+          {/* Straight overwrite: take the upstream file verbatim. The
+              escape hatch for people who don't want (or can't pay for)
+              a Claude merge and are happy to lose the local copy. */}
+          {canSync && (
+            <button
+              onClick={onReplace}
+              disabled={replacing}
+              className="text-xs px-3 py-1 rounded font-medium border transition-colors disabled:opacity-60"
+              style={{
+                borderColor: "var(--color-warn-border)",
+                color: "var(--color-warn-ink)",
+                backgroundColor: "transparent",
+              }}
+              title="Overwrite this doc with the current file on GitHub"
+            >
+              {replacing ? "Replacing…" : "Replace with latest"}
+            </button>
+          )}
           <a
             href={githubURL}
             target="_blank"
@@ -110,7 +143,8 @@ export default function SourceDriftBanner({
           {canSync && (
             <button
               onClick={onIgnore}
-              className="text-xs ml-2 underline hover:no-underline"
+              disabled={replacing}
+              className="text-xs ml-2 underline hover:no-underline disabled:opacity-60"
               style={{ color: "var(--color-warn-muted)" }}
               title="Hide this banner until a newer upstream commit shows up"
             >

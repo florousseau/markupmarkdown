@@ -252,6 +252,8 @@ Three invariants in getDocument's drift handling ([documents.go](backend/interna
 
 If you add a new revision-creating or pushing path, check all three still hold.
 
+The banner exposes **two** reconciliation paths, and both must stay wired: *Merge changes from GitHub* (`/merge-preview` SSE → `/merge-accept`, Claude, diff preview) and *Replace with latest* (`POST /api/documents/:id/sync`, upstream taken verbatim, no Claude, no cost). Replace is the escape hatch for users without an Anthropic key — it went un-surfaced in the UI for months even though the endpoint shipped, so if you refactor the banner, don't drop it. Both are admin-scoped, both overwrite the doc in place (no new revision), and both run the SAME `reanchorComments` pass, so comments are never deleted — unmatched ones flip to `orphan: true`. Because Replace discards the local copy outright, it is gated behind a `danger` `useDialog()` confirm in [Document.tsx](frontend/src/pages/Document.tsx) (`confirmReplaceSource`); keep that gate on any new verbatim-overwrite path.
+
 ### 19. Review requests and standing reviewers
 
 A `ReviewRequest` targets a human (`reviewer_user_id`) XOR an agent token (`reviewer_token_id`) — the token must belong to the requester (you can't summon someone else's bot). Fulfillment is implicit: `setReview` / MCP `SetReviewState` complete any pending request the reviewer holds on the doc — never add an explicit "submit review" step. Humans are notified via the bell; agents poll `list_review_requests`. Deterministic `_id`s (`docID:reviewerKey`) make re-requesting an upsert, not a duplicate.

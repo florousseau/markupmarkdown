@@ -107,6 +107,10 @@ export default function DocumentPage() {
   // showMerge holds the modal state for the 3-way merge flow. Opened
   // when the user clicks the drift banner's merge button.
   const [showMerge, setShowMerge] = useState(false);
+  // True while POST /sync is in flight (the "Replace with latest"
+  // path). Disables the drift banner's actions so a slow GitHub fetch
+  // can't be fired twice.
+  const [replacing, setReplacing] = useState(false);
   // editing toggles the doc page into Markdown-editor mode. Saving
   // creates a new revision in the chain (manual edit) and navigates
   // to it; the editor pane handles the textarea + live preview.
@@ -758,6 +762,78 @@ export default function DocumentPage() {
     }
   }
 
+  // Called by the SourceDriftBanner's "Replace with latest" button.
+  // This is the no-Claude path: throw away the local copy and take the
+  // upstream file verbatim. Destructive enough to warrant an explicit
+  // confirmation modal — the doc's current content is gone, and every
+  // comment gets re-anchored against text it may no longer match.
+  async function confirmReplaceSource() {
+    if (!id || !doc) return;
+    // Anchored, unresolved comments are the ones with something to
+    // lose: a doc-level comment has no quote to re-find, and orphans
+    // have already lost their anchor.
+    const atRisk = comments.filter(
+      (c) => !!c.anchor?.exact && !c.orphan && !c.resolved
+    ).length;
+    const ok = await dialog.confirm({
+      title: "Replace this doc with the latest version?",
+      danger: true,
+      body: (
+        <div className="space-y-2 text-sm">
+          <p>
+            The current content of this document will be{" "}
+            <strong>discarded</strong> and replaced with the file exactly as
+            it stands on GitHub right now. Any in-app edits
+            {isRevisionDoc ? " and the AI revision in this doc" : ""} are lost
+            — this is not a merge, and there's no diff preview.
+          </p>
+          <p>
+            <strong>Your comments will lose their place.</strong> Every comment
+            is re-matched against the new text: any whose quoted passage the
+            upstream edit changed or removed can no longer be attached to the
+            document. Those threads aren't deleted — they drop into the
+            orphan list below the doc, where each one has to be re-anchored by
+            hand or abandoned.
+            {atRisk > 0 ? (
+              <>
+                {" "}
+                This doc has <strong>{atRisk}</strong> open anchored comment
+                {atRisk === 1 ? "" : "s"} at risk.
+              </>
+            ) : null}
+          </p>
+          <p className="text-muted">
+            Want to keep both sides instead? Cancel and use{" "}
+            <em>Merge changes from GitHub</em> — it reconciles the upstream
+            edits with this copy and shows you a diff before saving.
+          </p>
+          <p className="text-muted">
+            This replaces the doc for every viewer, and can't be undone.
+          </p>
+        </div>
+      ),
+      confirmLabel: "Replace and discard",
+      cancelLabel: "Cancel",
+    });
+    if (!ok) return;
+    setReplacing(true);
+    try {
+      const res = await api.syncDocumentSource(id);
+      // Same refresh the merge path uses: pull the new content plus
+      // the re-anchored comment set.
+      await handleMerged();
+      const tail =
+        res.orphanCount > 0
+          ? ` — ${res.cleanCount} re-anchored, ${res.orphanCount} orphan${res.orphanCount === 1 ? "" : "s"}`
+          : "";
+      toast.success(`Replaced with the latest version from GitHub${tail}.`);
+    } catch (err) {
+      toastError(err, "Couldn't replace with the latest version.");
+    } finally {
+      setReplacing(false);
+    }
+  }
+
   // Called by the SourceDriftBanner's "Ignore" button. Pops a
   // confirmation modal explaining what's about to happen, then calls
   // the backend to stamp this upstream SHA as ignored. Local doc
@@ -1099,6 +1175,11 @@ export default function DocumentPage() {
       doc.sourceLatestSha !== doc?.sourceDriftIgnoredSha
   );
 
+  // True when this doc is an AI/manual revision rather than the cloned
+  // root. Drives the drift banner copy and the replace-confirmation
+  // wording (a replace on a revision throws the revision away).
+  const isRevisionDoc = Boolean(doc?.parentId || doc?.revisionMeta);
+
   async function handleReviseClick() {
     if (!user) {
       setReviseSignInExplain(true);
@@ -1311,8 +1392,10 @@ export default function DocumentPage() {
               driftedAt={doc.sourceDriftedAt}
               canSync={!!user}
               onMerge={() => setShowMerge(true)}
+              onReplace={confirmReplaceSource}
+              replacing={replacing}
               onIgnore={confirmIgnoreDrift}
-              isRevision={Boolean(doc.parentId || doc.revisionMeta)}
+              isRevision={isRevisionDoc}
             />
           )}
 

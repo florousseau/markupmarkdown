@@ -8,6 +8,25 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 _Nothing yet._
 
+## [1.0.2] — 2026-09-02
+
+### Added
+
+- **"Replace with latest" on the source-drift banner.** When the file on
+  GitHub moves ahead of the cloned copy, the banner offered exactly one
+  way forward: a Claude-powered 3-way merge (which needs an Anthropic key
+  and burns tokens). There is now a second button that takes the upstream
+  file verbatim — no Claude call, no cost, no diff preview. It drives the
+  long-standing `POST /api/documents/:id/sync` endpoint, which was fully
+  implemented server-side but had never been surfaced in the UI.
+- **Destructive-replace confirmation modal.** Replace discards the doc's
+  current content — including an AI or manual revision — and re-anchors
+  every comment against text that may no longer match. The confirm dialog
+  spells that out, counts the open anchored comments at risk, explains
+  that unmatched threads drop into the orphan list rather than staying
+  attached, and points at Merge as the non-destructive alternative.
+  Styled `useDialog()` confirm, `danger` variant — no native `confirm()`.
+
 ## [1.0.1] — 2026-07-08
 
 ### Fixed
