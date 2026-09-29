@@ -62,6 +62,19 @@ export function getSelectionAnchor(container: HTMLElement): AnchorSpec | null {
 
   const range = sel.getRangeAt(0);
   if (!container.contains(range.commonAncestorContainer)) return null;
+  // A rendered Mermaid diagram lives in a shadow root and has no
+  // textContent offsets; comment on it by selecting its source instead.
+  if (inMermaidHost(range.startContainer) || inMermaidHost(range.endContainer)) {
+    return null;
+  }
+  // A selection running ACROSS a shown diagram would count its hidden
+  // source in start/end while sel.toString() omits it — an anchor whose
+  // `exact` disagrees with its own offsets. Refuse it.
+  for (const src of Array.from(
+    container.querySelectorAll("[data-mm-mermaid-source][hidden]"),
+  )) {
+    if (range.intersectsNode(src)) return null;
+  }
 
   const start = getTextOffset(container, range.startContainer, range.startOffset);
   const end = getTextOffset(container, range.endContainer, range.endOffset);
@@ -71,6 +84,11 @@ export function getSelectionAnchor(container: HTMLElement): AnchorSpec | null {
   if (!exact || exact.trim() === "") return null;
 
   return { start, end, exact };
+}
+
+function inMermaidHost(node: Node): boolean {
+  const el = node.nodeType === Node.ELEMENT_NODE ? (node as Element) : node.parentElement;
+  return !!el?.closest("[data-mm-mermaid-host]");
 }
 
 export function unwrapHighlights(container: HTMLElement) {
@@ -181,5 +199,10 @@ export function getHighlightRect(
     `span.mm-highlight[data-comment-id="${commentId}"]`
   );
   if (!el) return null;
+  // Highlights inside a Mermaid block's source measure 0×0 while the
+  // diagram is shown (the <pre> is hidden); align to the block instead.
+  const hiddenSource = el.closest("[data-mm-mermaid-source][hidden]");
+  const block = hiddenSource?.closest("[data-mm-mermaid]");
+  if (block) return block.getBoundingClientRect();
   return (el as HTMLElement).getBoundingClientRect();
 }

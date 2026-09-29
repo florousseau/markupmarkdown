@@ -149,6 +149,8 @@ Any revision written under an agent token (via `edit_document`, `revise_with_ai 
 
 If `"we may scale linearly"` appears twice in the doc, the tool returns an error. Disambiguate with `"occurrence": 2`.
 
+Mermaid diagrams (```` ```mermaid ```` fences) render as diagrams in the UI, but anchoring still works on the **source**: quote text from the fence body (e.g. `"A[Start] --> B"`), never a rendered label that doesn't appear verbatim in the source. The UI flips the block to its source view when your comment is opened.
+
 ### Suggest a multi-thread revision and apply it (with human approval)
 
 ```jsonc
