@@ -18,7 +18,12 @@ interface Props {
   /** Display name of another user currently holding the soft edit
    * lock; when set, the Edit button is disabled with a tooltip. */
   editLockedBy?: string;
-  onPushback: () => void;
+  /** Undefined hides the Push button (identity-only OAuth scope). */
+  onPushback?: () => void;
+  /** Replace the content with a local .md file as a new revision.
+   * Undefined hides the button (signed out, or mid-edit). */
+  onUploadVersion?: (file: File) => void;
+  uploadingVersion?: boolean;
   onShare: () => void;
   onDownload: () => void;
   onDelete: () => void;
@@ -33,6 +38,8 @@ export default function DocumentToolbar({
   onEdit,
   editLockedBy,
   onPushback,
+  onUploadVersion,
+  uploadingVersion,
   onShare,
   onDownload,
   onDelete,
@@ -117,7 +124,34 @@ export default function DocumentToolbar({
             </svg>
             Revise with AI
           </button>
-          {isGitHubDoc && signedIn && (
+          {onUploadVersion && (
+            <label
+              className={`text-muted hover:text-ink ${
+                editLockedBy || uploadingVersion ? "opacity-50 cursor-not-allowed" : "cursor-pointer"
+              }`}
+              title={
+                editLockedBy
+                  ? `${editLockedBy} is editing this document. Try again in a few minutes.`
+                  : "Upload a new version of this file (.md). Saved as a new revision; open comments carry over."
+              }
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12" />
+              </svg>
+              <input
+                type="file"
+                accept=".md,text/markdown,text/plain"
+                className="hidden"
+                disabled={!!editLockedBy || uploadingVersion}
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  e.target.value = "";
+                  if (file) onUploadVersion(file);
+                }}
+              />
+            </label>
+          )}
+          {isGitHubDoc && signedIn && onPushback && (
             <button
               onClick={onPushback}
               className="text-muted hover:text-ink"
