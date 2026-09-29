@@ -6,7 +6,20 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **In-document anchor links (`[Section](#section)`) now scroll.**
+  rehype-sanitize prefixes every heading id with `user-content-` (same
+  as GitHub), but the click handler looked up the bare slug and silently
+  gave up, so tables of contents did nothing. Fragments are now resolved
+  through the prefix, with GitHub-compatible slugs (accents kept,
+  punctuation/emoji dropped, `-1` suffix on duplicates), a lowercase
+  fallback for hand-written TOCs, and `<a name>` / raw `<a id>` anchors.
+
 ### Added
+
+- **Shareable section links.** Opening `/d/<id>#section` scrolls to that
+  section once the doc renders; editing the hash by hand follows it.
 
 - **Mermaid diagrams render in the document view.** ```` ```mermaid ````
   fences now display as diagrams (flowcharts, sequence diagrams, …) in
