@@ -21,6 +21,19 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Shareable section links.** Opening `/d/<id>#section` scrolls to that
   section once the doc renders; editing the hash by hand follows it.
 
+- **Mermaid diagrams render in the document view.** ```` ```mermaid ````
+  fences now display as diagrams (flowcharts, sequence diagrams, …) in
+  the doc page, the edit-mode preview and the revision diff, following
+  the light/dark theme. A per-block toolbar toggles between diagram and
+  source; an invalid diagram falls back to its source with the parse
+  error. Mermaid is lazy-loaded (separate chunk), so docs without a
+  diagram don't pay for it, and runs in `strict` security mode.
+- **Comment anchors are unaffected.** The diagram is drawn in a shadow
+  root and the source stays in the DOM (hidden), so the rendered
+  `textContent` — and every stored anchor offset — is byte-identical to
+  before. Comments on diagram source still highlight; their cards align
+  to the diagram block, and opening one flips the block to source.
+
 ## [1.0.2] — 2026-09-02
 
 ### Added

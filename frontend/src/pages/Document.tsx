@@ -389,6 +389,26 @@ export default function DocumentPage() {
     };
   }, []);
 
+  // The rendered doc can also change height on its own after render —
+  // Mermaid diagrams render asynchronously and toggle between diagram
+  // and source, images load late. Every highlight below that point
+  // moves, so re-measure (same rAF throttle as above).
+  useEffect(() => {
+    const el = contentRef.current;
+    if (!el || editing) return;
+    let queued = false;
+    const ro = new ResizeObserver(() => {
+      if (queued) return;
+      queued = true;
+      requestAnimationFrame(() => {
+        queued = false;
+        setLayoutTick((n) => n + 1);
+      });
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [doc, editing]);
+
   // Source-drift + access re-verification check. Fires:
   //   • immediately on mount (covers the case Jon raised — open the doc
   //     after a quick GitHub edit, see the banner without a manual reload)

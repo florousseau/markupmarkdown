@@ -420,7 +420,7 @@ function StreamingPanel({
           </div>
         ) : (
           <div className="max-w-3xl mx-auto relative">
-            <MarkdownRender content={streamed} baseUrl={baseUrl} />
+            <MarkdownRender content={streamed} baseUrl={baseUrl} renderDiagrams={false} />
             <span
               aria-hidden
               className="inline-block w-1.5 h-4 bg-accent align-text-bottom ml-0.5 animate-pulse"
