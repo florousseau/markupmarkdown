@@ -159,3 +159,63 @@ body {
 }
 .mm-prose hr { border: 0; border-top: 1px solid var(--color-rule); margin: 2rem 0; }
 .mm-prose img { max-width: 100%; height: auto; }
+
+/* Mermaid block (MermaidBlock.tsx). The SVG sits in a shadow root; the
+   source <pre> stays in the DOM (hidden) so comment offsets hold. */
+.mm-prose .mm-mermaid {
+  position: relative;
+  margin: 1rem 0;
+}
+.mm-prose .mm-mermaid pre { margin: 0; }
+/* Invalid diagram: error note (in the host) stacked over the source. */
+.mm-prose .mm-mermaid-diagram:not([hidden]) + pre:not([hidden]) { margin-top: 0.5rem; }
+.mm-prose .mm-mermaid-diagram {
+  padding: 1rem;
+  border: 1px solid var(--color-rule);
+  border-radius: 6px;
+  background: var(--color-card);
+  /* Labels aren't anchorable (no light-DOM text); select the source. */
+  user-select: none;
+}
+.mm-prose .mm-mermaid-toolbar {
+  position: absolute;
+  top: 0.4rem;
+  right: 0.4rem;
+  z-index: 1;
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--color-rule);
+  border-radius: 6px;
+  background: var(--color-card);
+  opacity: 0;
+  transition: opacity 120ms;
+}
+.mm-prose .mm-mermaid:hover .mm-mermaid-toolbar,
+.mm-prose .mm-mermaid-toolbar:focus-within,
+.mm-prose .mm-mermaid-toolbar:has(.mm-mermaid-dot) { opacity: 1; }
+.mm-prose .mm-mermaid-toolbar button {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 22px;
+  border-radius: 4px;
+  color: var(--color-muted);
+  cursor: pointer;
+}
+.mm-prose .mm-mermaid-toolbar button:hover { color: var(--color-ink); background: var(--color-soft); }
+.mm-prose .mm-mermaid-toolbar button[aria-pressed="true"] {
+  color: var(--color-accent);
+  background: var(--color-accent-soft);
+}
+.mm-prose .mm-mermaid-dot {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 6px;
+  height: 6px;
+  border-radius: 9999px;
+  background: var(--color-highlight-border);
+}

@@ -1,10 +1,12 @@
 import { forwardRef, memo, useCallback } from "react";
-import ReactMarkdown from "react-markdown";
+import ReactMarkdown, { type Components } from "react-markdown";
+import type { Element, ElementContent } from "hast";
 import remarkGfm from "remark-gfm";
 import rehypeRaw from "rehype-raw";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import rehypeSlug from "rehype-slug";
 import { makeUrlTransform } from "../utils/baseUrl";
+import MermaidBlock from "./MermaidBlock";
 
 interface Props {
   content: string;
@@ -16,6 +18,10 @@ interface Props {
    * reading, so the click should scroll within the page rather than
    * navigating away to github.com. */
   sourceUrl?: string;
+  /** Render ```mermaid fences as diagrams (default true). Off while a
+   * revision is streaming in — a half-written diagram would re-render
+   * and fail on every token. */
+  renderDiagrams?: boolean;
 }
 
 // Extend the default sanitize schema to allow common HTML tags people put in
@@ -58,8 +64,42 @@ const schema = {
   },
 };
 
+// mermaidSource returns the diagram source when `pre` wraps a
+// ```mermaid fence (<pre><code class="language-mermaid">), else null.
+// rehype-sanitize's default schema keeps `language-*` classes on code.
+function mermaidSource(pre: Element | undefined): string | null {
+  const code = pre?.children.find((c) => c.type === "element");
+  if (!code || code.type !== "element" || code.tagName !== "code") return null;
+  const cls = code.properties?.className;
+  const classes = Array.isArray(cls) ? cls : typeof cls === "string" ? cls.split(/\s+/) : [];
+  if (!classes.includes("language-mermaid")) return null;
+  return hastText(code).replace(/\n$/, "");
+}
+
+function hastText(node: ElementContent): string {
+  if (node.type === "text") return node.value;
+  if (node.type === "element") return node.children.map(hastText).join("");
+  return "";
+}
+
+// Overriding `pre` (not `code`) lets MermaidBlock wrap the original
+// <pre> in a block container without nesting a <div> inside it. The
+// original children are passed through untouched so the rendered
+// textContent — and with it every comment anchor offset — is unchanged.
+const diagramComponents: Components = {
+  pre({ node, children, ...rest }) {
+    const source = mermaidSource(node);
+    if (source === null) return <pre {...rest}>{children}</pre>;
+    return (
+      <MermaidBlock {...rest} source={source}>
+        {children}
+      </MermaidBlock>
+    );
+  },
+};
+
 const MarkdownRender = memo(
-  forwardRef<HTMLDivElement, Props>(({ content, baseUrl, sourceUrl }, ref) => {
+  forwardRef<HTMLDivElement, Props>(({ content, baseUrl, sourceUrl, renderDiagrams = true }, ref) => {
     const urlTransform = makeUrlTransform(baseUrl);
     // Intercept clicks on in-document anchor links so they scroll
     // within the page instead of triggering a full reload. Three URL
@@ -125,6 +165,7 @@ const MarkdownRender = memo(
           remarkPlugins={[remarkGfm]}
           rehypePlugins={[rehypeSlug, rehypeRaw, [rehypeSanitize, schema]]}
           urlTransform={urlTransform}
+          components={renderDiagrams ? diagramComponents : undefined}
         >
           {content}
         </ReactMarkdown>
