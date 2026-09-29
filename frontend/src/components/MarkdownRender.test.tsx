@@ -1,4 +1,4 @@
-import { fireEvent, render } from "@testing-library/react";
+import { act, fireEvent, render } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import MarkdownRender from "./MarkdownRender";
 
@@ -70,5 +70,37 @@ describe("MarkdownRender anchor clicks", () => {
     expect(click(container, "Absent")).toBe(true);
     expect(click(container, "Vide")).toBe(true);
     expect(scrolled).toEqual([]);
+  });
+});
+
+describe("MarkdownRender URL hash", () => {
+  it("scrolls to the hash on first render", () => {
+    window.history.replaceState(null, "", "/d/doc1#r%C3%A9sum%C3%A9-ex%C3%A9cutif");
+    render(<MarkdownRender content={MD} />);
+    expect(scrolled.map((e) => e.id)).toEqual(["user-content-résumé-exécutif"]);
+  });
+
+  it("does not re-scroll when the content is replaced by a new revision", () => {
+    window.history.replaceState(null, "", "/d/doc1#intro");
+    const { rerender } = render(<MarkdownRender content={MD} />);
+    rerender(<MarkdownRender content={MD + "\nNouveau paragraphe.\n"} />);
+    expect(scrolled).toHaveLength(1);
+  });
+
+  it("follows manual hash changes and ignores unknown ones", () => {
+    render(<MarkdownRender content={MD} />);
+    act(() => {
+      window.history.replaceState(null, "", "/d/doc1#intro-1");
+      window.dispatchEvent(new HashChangeEvent("hashchange"));
+      window.history.replaceState(null, "", "/d/doc1#inconnu");
+      window.dispatchEvent(new HashChangeEvent("hashchange"));
+    });
+    expect(scrolled.map((e) => e.id)).toEqual(["user-content-intro-1"]);
+  });
+
+  it("forwards the ref (Document.tsx relies on it for highlights)", () => {
+    const ref = { current: null as HTMLDivElement | null };
+    render(<MarkdownRender ref={ref} content={MD} />);
+    expect(ref.current?.className).toBe("mm-prose");
   });
 });

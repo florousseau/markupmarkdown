@@ -1,4 +1,4 @@
-import { forwardRef, memo, useCallback } from "react";
+import { forwardRef, memo, useCallback, useEffect, useRef } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeRaw from "rehype-raw";
@@ -120,8 +120,40 @@ const MarkdownRender = memo(
       [sourceUrl],
     );
 
+    // Shareable section links: honour `#section` in the URL once the doc
+    // has rendered (the browser's own attempt ran before the content
+    // arrived, and couldn't know about the user-content- prefix anyway),
+    // and again whenever the hash changes by hand. Only the first render
+    // with content scrolls — a live revision swap (SSE) must not yank the
+    // reader back to the section they opened.
+    const rootRef = useRef<HTMLDivElement | null>(null);
+    const setRefs = useCallback(
+      (el: HTMLDivElement | null) => {
+        rootRef.current = el;
+        if (typeof ref === "function") ref(el);
+        else if (ref) ref.current = el;
+      },
+      [ref],
+    );
+    const initialHashDone = useRef(false);
+    useEffect(() => {
+      const scrollToHash = (behavior: ScrollBehavior) => {
+        const root = rootRef.current;
+        const hash = window.location.hash;
+        if (!root || hash.length < 2) return;
+        findAnchorTarget(root, hash)?.scrollIntoView({ behavior, block: "start" });
+      };
+      if (!initialHashDone.current && content) {
+        initialHashDone.current = true;
+        scrollToHash("auto");
+      }
+      const onHashChange = () => scrollToHash("smooth");
+      window.addEventListener("hashchange", onHashChange);
+      return () => window.removeEventListener("hashchange", onHashChange);
+    }, [content]);
+
     return (
-      <div ref={ref} className="mm-prose" onClick={onClick}>
+      <div ref={setRefs} className="mm-prose" onClick={onClick}>
         <ReactMarkdown
           remarkPlugins={[remarkGfm]}
           rehypePlugins={[rehypeSlug, rehypeRaw, [rehypeSanitize, schema]]}
