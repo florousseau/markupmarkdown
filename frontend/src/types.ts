@@ -512,6 +512,9 @@ export interface AuthUser {
 export interface AuthConfig {
   githubEnabled: boolean;
   githubClientId?: string;
+  /** False when the deploy's OAuth scope is identity-only (no repo /
+   * public_repo) — the SPA hides Push-to-GitHub. */
+  githubRepoAccess?: boolean;
 }
 
 export interface Reply {

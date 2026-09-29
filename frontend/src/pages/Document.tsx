@@ -42,7 +42,7 @@ type Filter = "open" | "unread" | "resolved" | "all";
 export default function DocumentPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user, githubRepoAccess } = useAuth();
   const dialog = useDialog();
   const toast = useToast();
   const [applyingAll, setApplyingAll] = useState(false);
@@ -116,6 +116,7 @@ export default function DocumentPage() {
   // to it; the editor pane handles the textarea + live preview.
   const [editing, setEditing] = useState(false);
   const [editSaving, setEditSaving] = useState(false);
+  const [uploadingVersion, setUploadingVersion] = useState(false);
   const [showPushback, setShowPushback] = useState(false);
   // editLock holds the current soft-lock state for the doc. When set
   // and !mine, the toolbar's Edit button is hidden and a banner says
@@ -767,6 +768,39 @@ export default function DocumentPage() {
     }
   }
 
+  // Upload a local .md as the next version. Same endpoint as a manual
+  // edit, so the server carries open comments forward and re-anchors
+  // them; the toast reports how many made it and how many orphaned so
+  // the user knows to check the orphan list.
+  async function handleUploadVersion(file: File) {
+    if (!doc || uploadingVersion) return;
+    setUploadingVersion(true);
+    try {
+      const content = await file.text();
+      const next = await api.createManualRevision(doc.id, { content });
+      let summary = "";
+      try {
+        const cs = await api.listComments(next.id);
+        const anchored = cs.filter((c) => !!c.anchor?.exact || c.orphan);
+        const orphans = anchored.filter((c) => c.orphan).length;
+        const fuzzy = anchored.filter((c) => c.fuzzyReanchored).length;
+        if (anchored.length > 0) {
+          summary = ` — ${anchored.length - orphans} comment${anchored.length - orphans === 1 ? "" : "s"} re-anchored`;
+          if (fuzzy > 0) summary += ` (${fuzzy} approximately)`;
+          if (orphans > 0) summary += `, ${orphans} orphaned (see the list below the doc)`;
+        }
+      } catch {
+        // Summary is best-effort; the revision itself succeeded.
+      }
+      toast.success(`Uploaded "${file.name}" as a new revision${summary}.`);
+      navigate(`/d/${next.id}`);
+    } catch (err) {
+      toastError(err, "Couldn't upload the new version.");
+    } finally {
+      setUploadingVersion(false);
+    }
+  }
+
   // Called by MergeModal after a successful merge accept. Refetch
   // doc + comments so the user sees the merged content + re-anchored
   // comments immediately. SSE will broadcast to any other open viewers.
@@ -1400,7 +1434,13 @@ export default function DocumentPage() {
             onRevise={handleReviseClick}
             onEdit={() => withIdentity(startEditing)}
             editLockedBy={editLock.locked && !editLock.mine ? editLock.holder : undefined}
-            onPushback={() => withIdentity(() => setShowPushback(true))}
+            onPushback={
+              githubRepoAccess
+                ? () => withIdentity(() => setShowPushback(true))
+                : undefined
+            }
+            onUploadVersion={user && !editing ? handleUploadVersion : undefined}
+            uploadingVersion={uploadingVersion}
             onShare={() => setShowShare(true)}
             onDownload={handleDownload}
             onDelete={deleteDoc}

@@ -140,7 +140,23 @@ func (a *API) authConfig(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"githubEnabled":  a.cfg.GitHub.Enabled(),
 		"githubClientId": a.cfg.GitHub.ClientID,
+		// Cosmetic: lets the SPA hide Push-to-GitHub when the deploy runs
+		// with an identity-only OAuth scope (GITHUB_SCOPE without repo).
+		// GitHub itself is the real enforcement — the push would 404.
+		"githubRepoAccess": scopeGrantsRepoWrite(a.cfg.GitHub.Scope),
 	})
+}
+
+// scopeGrantsRepoWrite reports whether a GitHub OAuth scope string
+// (space- or comma-separated) lets the app write to repositories.
+// `public_repo` counts: pushback to public repos works under it.
+func scopeGrantsRepoWrite(scope string) bool {
+	for _, s := range strings.FieldsFunc(scope, func(r rune) bool { return r == ' ' || r == ',' }) {
+		if s == "repo" || s == "public_repo" {
+			return true
+		}
+	}
+	return false
 }
 
 func (a *API) authMe(w http.ResponseWriter, r *http.Request) {
