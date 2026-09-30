@@ -89,6 +89,7 @@ func (a *API) Register(r *mux.Router) {
 
 	r.HandleFunc("/api/documents/{id}/comments", a.listComments).Methods("GET")
 	r.HandleFunc("/api/documents/{id}/comments", a.createComment).Methods("POST")
+	r.HandleFunc("/api/documents/{id}/comments", a.deleteAllComments).Methods("DELETE")
 	r.HandleFunc("/api/documents/{id}/events", a.streamEvents).Methods("GET")
 
 	r.HandleFunc("/api/comments/{id}", a.patchComment).Methods("PATCH")
