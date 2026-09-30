@@ -460,6 +460,31 @@ func (a *API) resolveComment(w http.ResponseWriter, r *http.Request) {
 	a.decorate(r, c); writeJSON(w, http.StatusOK, c)
 }
 
+// resolveAllComments is POST /api/documents/:id/resolve-all — marks
+// every open comment on this revision done in one go. Same guards as
+// resolving one comment (doc access, write scope); one broadcast.
+func (a *API) resolveAllComments(w http.ResponseWriter, r *http.Request) {
+	doc, accErr := a.checkDocAccess(r, mux.Vars(r)["id"])
+	if accErr != nil {
+		a.writeAccessError(w, r, accErr)
+		return
+	}
+	if !a.enforceScope(w, r, models.TokenScopeWrite) {
+		return
+	}
+	var req resolveRequest
+	_ = readJSON(r, &req)
+	n, err := a.store.ResolveOpenComments(r.Context(), doc.ID, a.resolveAuthor(r, req.Author), time.Now().UTC())
+	if err != nil {
+		internalError(w, "store.resolve_open_comments", err)
+		return
+	}
+	if n > 0 {
+		a.hub.Broadcast(doc.ID, "comments-updated")
+	}
+	writeJSON(w, http.StatusOK, map[string]int64{"resolved": n})
+}
+
 func (a *API) reopenComment(w http.ResponseWriter, r *http.Request) {
 	id := mux.Vars(r)["id"]
 	if _, _, accErr := a.checkCommentAccess(r, id); accErr != nil {

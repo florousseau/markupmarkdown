@@ -2063,6 +2063,24 @@ func (s *Store) UpdateComment(ctx context.Context, id string, set bson.M) (*mode
 	return s.GetComment(ctx, id)
 }
 
+// ResolveOpenComments marks every unresolved comment on docID as
+// resolved by `by` at `at`, in one UpdateMany. Returns how many changed.
+func (s *Store) ResolveOpenComments(ctx context.Context, docID, by string, at time.Time) (int64, error) {
+	res, err := s.Comments().UpdateMany(ctx,
+		bson.M{"document_id": docID, "resolved": bson.M{"$ne": true}},
+		bson.M{"$set": bson.M{
+			"resolved":    true,
+			"resolved_by": by,
+			"resolved_at": at,
+			"updated_at":  at,
+		}},
+	)
+	if err != nil {
+		return 0, err
+	}
+	return res.ModifiedCount, nil
+}
+
 func (s *Store) DeleteComment(ctx context.Context, id string) error {
 	_, err := s.Comments().DeleteOne(ctx, bson.M{"_id": id})
 	return err

@@ -24,6 +24,7 @@ import { activeTocId, extractToc, fragmentForId, type TocItem } from "../utils/t
 import { decodeFragment, findAnchorTarget } from "../utils/headingAnchor";
 import { loadScroll, saveScroll } from "../utils/scrollMemory";
 import TocSidebar from "../components/TocSidebar";
+import BackToTop from "../components/BackToTop";
 import { canonicalDocPath, rewriteToCanonical } from "../utils/canonicalUrl";
 import SelectionPopover from "../components/SelectionPopover";
 import NewCommentComposer from "../components/NewCommentComposer";
@@ -65,6 +66,7 @@ export default function DocumentPage() {
   const dialog = useDialog();
   const toast = useToast();
   const [applyingAll, setApplyingAll] = useState(false);
+  const [resolvingAll, setResolvingAll] = useState(false);
   const [searchParams, setSearchParams] = useSearchParams();
   const [showSignIn, setShowSignIn] = useState(false);
   const [pendingAction, setPendingAction] = useState<(() => void) | null>(null);
@@ -1295,6 +1297,37 @@ export default function DocumentPage() {
       setApplyingAll(false);
     }
   }
+  // Mark every open comment on this revision done: one confirm, one
+  // request. Local state is flipped optimistically-after-success rather
+  // than refetched — the server resolves exactly the comments that were
+  // open, which is what this list holds.
+  async function handleResolveAll() {
+    if (!id || resolvingAll) return;
+    const n = comments.filter((c) => !c.resolved).length;
+    const ok = await dialog.confirm({
+      title: `Mark ${n} comments as done?`,
+      body:
+        "Every open comment on this revision is resolved. Each one can " +
+        "still be reopened from the Done filter.",
+      confirmLabel: "Mark all done",
+    });
+    if (!ok) return;
+    setResolvingAll(true);
+    const by = user?.name || user?.login || getAuthor() || "Anonymous";
+    try {
+      const res = await api.resolveAllComments(id, by);
+      const at = new Date().toISOString();
+      applyMutation((prev) =>
+        prev.map((c) => (c.resolved ? c : { ...c, resolved: true, resolvedBy: by, resolvedAt: at })),
+      );
+      setActiveId(null);
+      toast.success(`Marked ${res.resolved} comments as done.`);
+    } catch (err) {
+      toastError(err, "Couldn't mark the comments as done.");
+    } finally {
+      setResolvingAll(false);
+    }
+  }
   async function handleReply(c: Comment, body: string) {
     const author = user?.name || user?.login || getAuthor() || "Anonymous";
     try {
@@ -1813,6 +1846,9 @@ export default function DocumentPage() {
           above) explicitly avoids reading the cards-container's
           viewport rect so internal sidebar scroll never feeds back into
           card positioning. */}
+      {/* Bottom-right of the document column: the comment sidebar is
+          w-96 (24rem), so sit 1.5rem to its left. */}
+      <BackToTop className="bottom-6 right-[25.5rem]" />
       <aside
         ref={sidebarRef}
         className="w-96 shrink-0 border-l border-rule bg-card overflow-y-auto sticky top-0 h-screen self-start"
@@ -1855,6 +1891,20 @@ export default function DocumentPage() {
               </FilterButton>
             </div>
           </div>
+          {/* Batch resolve: appears only when 2+ comments are open —
+              a single one is already one click on its card. */}
+          {openCount >= 2 && (
+            <div className="px-4 pb-2 -mt-1 flex items-center justify-between gap-2 text-xs">
+              <span className="text-muted">{openCount} open comments</span>
+              <button
+                onClick={handleResolveAll}
+                disabled={resolvingAll}
+                className="px-2.5 py-1 rounded border border-rule text-ink hover:bg-soft disabled:opacity-50 font-medium"
+              >
+                {resolvingAll ? "Marking…" : "Mark all done"}
+              </button>
+            </div>
+          )}
           {/* Batch apply: appears only when 2+ open suggestions exist.
               One click, one confirm, one revision — the "accept the
               agent's whole review" gesture. */}
