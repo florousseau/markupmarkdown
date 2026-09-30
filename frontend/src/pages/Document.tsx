@@ -35,6 +35,7 @@ import SignInModal from "../components/SignInModal";
 import APIKeyModal from "../components/APIKeyModal";
 import ReviseModal from "../components/ReviseModal";
 import ShareModal from "../components/ShareModal";
+import ExportCommentsModal from "../components/ExportCommentsModal";
 import { useDialog } from "../components/Dialogs";
 import { useToast, toastMessageFor } from "../components/Toast";
 import { useSessionReadIds } from "../utils/sessionReadIds";
@@ -62,6 +63,7 @@ export default function DocumentPage() {
   const [showAPIKey, setShowAPIKey] = useState(false);
   const [showRevise, setShowRevise] = useState(false);
   const [showShare, setShowShare] = useState(false);
+  const [showExport, setShowExport] = useState(false);
   const [reviseSignInExplain, setReviseSignInExplain] = useState(false);
 
   const [doc, setDoc] = useState<MdDocument | null>(null);
@@ -1572,6 +1574,7 @@ export default function DocumentPage() {
             uploadingVersion={uploadingVersion}
             onShare={() => setShowShare(true)}
             onDownload={handleDownload}
+            onExportComments={() => setShowExport(true)}
             onDelete={deleteDoc}
           />
 
@@ -2094,6 +2097,9 @@ export default function DocumentPage() {
         />
       )}
 
+      {showExport && (
+        <ExportCommentsModal doc={doc} comments={comments} onClose={() => setShowExport(false)} />
+      )}
       {showShare && (
         <ShareModal doc={doc} onClose={() => setShowShare(false)} />
       )}
