@@ -26,6 +26,7 @@ interface Props {
   uploadingVersion?: boolean;
   onShare: () => void;
   onDownload: () => void;
+  onExportComments: () => void;
   onDelete: () => void;
 }
 
@@ -47,6 +48,7 @@ export default function DocumentToolbar({
   uploadingVersion,
   onShare,
   onDownload,
+  onExportComments,
   onDelete,
 }: Props) {
   const isGitHubDoc = Boolean(
@@ -174,6 +176,16 @@ export default function DocumentToolbar({
               <circle cx="18" cy="19" r="3" />
               <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" />
               <line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
+            </svg>
+          </button>
+          <button
+            onClick={onExportComments}
+            className="text-muted hover:text-ink"
+            title="Export comments (to hand to an AI)"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+              <path d="M12 7v6M9 10l3 3 3-3" />
             </svg>
           </button>
           <button onClick={onDownload} className="text-muted hover:text-ink" title="Download as .md">
