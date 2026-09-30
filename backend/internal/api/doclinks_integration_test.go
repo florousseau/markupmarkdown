@@ -17,6 +17,10 @@ import (
 	"markupmarkdown/internal/testutil"
 )
 
+// testLinks is the body every fixture carries, so the resolver's
+// "the doc must actually link there" check passes for these names.
+const testLinks = "[a](./autre.md#section) [p](PLAN.md) [l](Legacy.md) [o](OTHER.md) [x](AUTRE.md)\n"
+
 func insertUpload(t *testing.T, st *store.Store, creatorID, title, filename, parentID string) *models.Document {
 	t.Helper()
 	now := time.Now().UTC()
@@ -25,7 +29,7 @@ func insertUpload(t *testing.T, st *store.Store, creatorID, title, filename, par
 		Title:          title,
 		Origin:         "upload",
 		SourceKind:     models.SourceKindUpload,
-		Content:        "# " + title + "\n",
+		Content:        "# " + title + "\n\n" + testLinks,
 		CreatedByID:    creatorID,
 		UploadFilename: filename,
 		ParentID:       parentID,
@@ -78,6 +82,20 @@ func TestResolveUploadLink(t *testing.T) {
 	})
 	t.Run("never crosses to another creator's uploads", func(t *testing.T) {
 		if status, _ := resolveLink(t, get, a.ID, "OTHER.md"); status != 404 {
+			t.Fatalf("status=%d, want 404", status)
+		}
+	})
+	t.Run("refuses names the doc doesn't link to", func(t *testing.T) {
+		// AUTRE.md exists, but a guessed name must not reveal it.
+		plain := &models.Document{
+			ID: uuid.NewString(), Title: "Plain", Origin: "upload",
+			Content: "# No links here\n", CreatedByID: alice.ID,
+			CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC(),
+		}
+		if err := st.InsertDocument(context.Background(), plain); err != nil {
+			t.Fatal(err)
+		}
+		if status, _ := resolveLink(t, get, plain.ID, "AUTRE.md"); status != 404 {
 			t.Fatalf("status=%d, want 404", status)
 		}
 	})
