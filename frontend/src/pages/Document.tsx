@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { Link, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { api, APIError } from "../api";
 import ErrorBlock from "../components/ErrorBlock";
 import type { AnchorSpec } from "../utils/anchor";
@@ -232,11 +232,42 @@ export default function DocumentPage() {
     };
   }, [id]);
 
-  // Older revisions no longer trigger a "newer version exists" popup.
-  // The doc list dedupes to leaves, so anyone landing on an older
-  // revision did so deliberately (via toolbar breadcrumb, history,
-  // or a deep link). The toolbar's "Latest revision: v3 →" link gives
-  // them a one-click path forward without yanking the page.
+  // Landing on an older revision (a shared /d/:id, a cross-doc link to a
+  // since-edited file, browser history…) offers the latest one in an
+  // in-app dialog. Never forced: "Stay" keeps the page as is, and the
+  // toolbar's "Latest: v3 →" link remains. Skipped when the reader got
+  // here on purpose — the toolbar's revision-history links (router
+  // state), a ?comment= deep link — and asked at most once per revision
+  // per tab.
+  const location = useLocation();
+  const newerPromptedRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    const latest = doc?.latestDescendant;
+    if (!doc || !latest || latest.id === doc.id) return;
+    if (newerPromptedRef.current.has(doc.id)) return;
+    newerPromptedRef.current.add(doc.id);
+    const fromHistory = (location.state as { fromRevisionHistory?: boolean } | null)
+      ?.fromRevisionHistory;
+    if (fromHistory || searchParams.has("comment")) return;
+    let cancelled = false;
+    const viewing = doc.revisionIndex ? `v${doc.revisionIndex}` : "an older version";
+    const newest = latest.revisionIndex ? `v${latest.revisionIndex}` : "a newer version";
+    void dialog
+      .confirm({
+        title: "A newer revision exists",
+        body: `You're viewing ${viewing} of this document. The latest is ${newest}.`,
+        confirmLabel: "Open latest",
+        cancelLabel: "Stay on this version",
+      })
+      .then((open) => {
+        if (open && !cancelled) navigate(`/d/${latest.id}${window.location.hash}`);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // Keyed on the loaded doc only: re-running on every location or
+    // search-param change would re-prompt after "Stay".
+  }, [doc?.id]);
 
   // Apply highlights after every render of doc content / comments / active
   useLayoutEffect(() => {
