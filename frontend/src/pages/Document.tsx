@@ -1,5 +1,12 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Link, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
+import {
+  Link,
+  useLocation,
+  useNavigate,
+  useNavigationType,
+  useParams,
+  useSearchParams,
+} from "react-router-dom";
 import { api, APIError } from "../api";
 import ErrorBlock from "../components/ErrorBlock";
 import type { AnchorSpec } from "../utils/anchor";
@@ -14,7 +21,8 @@ import MarkdownRender from "../components/MarkdownRender";
 import { baseURLForDoc } from "../utils/baseUrl";
 import { docLinkBase, type RelativeDocLink } from "../utils/docLinks";
 import { activeTocId, extractToc, fragmentForId, type TocItem } from "../utils/toc";
-import { findAnchorTarget, setUrlFragment } from "../utils/headingAnchor";
+import { decodeFragment, findAnchorTarget } from "../utils/headingAnchor";
+import { loadScroll, saveScroll } from "../utils/scrollMemory";
 import TocSidebar from "../components/TocSidebar";
 import { canonicalDocPath, rewriteToCanonical } from "../utils/canonicalUrl";
 import SelectionPopover from "../components/SelectionPopover";
@@ -269,6 +277,37 @@ export default function DocumentPage() {
     };
     // Keyed on the loaded doc only: re-running on every location or
     // search-param change would re-prompt after "Stay".
+  }, [doc?.id]);
+
+  // Reading position per history entry (utils/scrollMemory). Saved while
+  // a loaded doc scrolls — never during the "Loading…" state, whose short
+  // page would clamp scrollY and overwrite the real position — and
+  // restored when Back/Forward lands on a doc that had to reload (e.g.
+  // back from a linked file). Section jumps within one doc keep the
+  // browser's native restoration: the content never went away.
+  const navigationType = useNavigationType();
+  useEffect(() => {
+    if (!doc) return;
+    const entry = location.key;
+    let frame = 0;
+    const onScroll = () => {
+      if (frame) return;
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        saveScroll(entry, window.scrollY);
+      });
+    };
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => {
+      window.removeEventListener("scroll", onScroll);
+      if (frame) cancelAnimationFrame(frame);
+    };
+  }, [doc, location.key]);
+  useEffect(() => {
+    if (!doc || navigationType !== "POP") return;
+    const y = loadScroll(location.key);
+    if (y != null) window.scrollTo(0, y);
+    // Once per doc load: later same-doc POPs are the browser's to restore.
   }, [doc?.id]);
 
   // Apply highlights after every render of doc content / comments / active
@@ -761,13 +800,31 @@ export default function DocumentPage() {
       if (frame) cancelAnimationFrame(frame);
     };
   }, [tocItems, editing]);
-  const selectTocItem = useCallback((item: TocItem) => {
-    const root = contentRef.current;
-    const el = root && findAnchorTarget(root, fragmentForId(item.id));
-    if (!el) return;
-    el.scrollIntoView({ behavior: "smooth", block: "start" });
-    setUrlFragment(fragmentForId(item.id));
-  }, []);
+  // In-document jumps (heading links, TOC) push a history entry, so the
+  // browser's Back/Forward — mouse side buttons included — walk the
+  // sections the reader clicked, and Back from the first one returns to
+  // where they clicked (native same-document scroll restoration). Pushed
+  // as /d/:id, a path this route owns, so going back never remounts the
+  // page through the GitHub-URL resolver.
+  const pushFragment = useCallback(
+    (fragment: string) => {
+      if (!id) return;
+      const hash = `#${encodeURIComponent(fragment)}`;
+      if (window.location.hash === hash) return;
+      navigate(`/d/${id}${window.location.search}${hash}`);
+    },
+    [id, navigate],
+  );
+  const selectTocItem = useCallback(
+    (item: TocItem) => {
+      const root = contentRef.current;
+      const el = root && findAnchorTarget(root, fragmentForId(item.id));
+      if (!el) return;
+      el.scrollIntoView({ behavior: "smooth", block: "start" });
+      pushFragment(fragmentForId(item.id));
+    },
+    [pushFragment],
+  );
 
   const openRelativeDocLink = useCallback(
     async (link: RelativeDocLink) => {
@@ -775,7 +832,12 @@ export default function DocumentPage() {
       try {
         const target = await api.resolveDocLink(id, link.name);
         if (target.id === id) {
-          if (link.hash) window.location.hash = link.hash;
+          const root = contentRef.current;
+          const el = link.hash && root ? findAnchorTarget(root, link.hash) : null;
+          if (el) {
+            el.scrollIntoView({ behavior: "smooth", block: "start" });
+            pushFragment(decodeFragment(link.hash));
+          }
           return;
         }
         navigate(`/d/${target.id}${link.hash}`);
@@ -784,7 +846,7 @@ export default function DocumentPage() {
         toastError(err, "Couldn't open that link.");
       }
     },
-    [id, navigate, toastError]
+    [id, navigate, toastError, pushFragment]
   );
 
   async function submitNewComment(body: string) {
@@ -1694,6 +1756,7 @@ export default function DocumentPage() {
               sourceUrl={doc.sourceUrl}
               docLinkBase={doc.sourceUrl ? undefined : docLinkBase(doc.id)}
               onRelativeDocLink={openRelativeDocLink}
+              onFragmentNavigate={pushFragment}
             />
           )}
 
