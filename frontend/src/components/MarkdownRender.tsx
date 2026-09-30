@@ -41,6 +41,11 @@ interface Props {
   /** Plain left-clicks on those rewritten links call this instead of
    * loading the intermediate /link/ page. */
   onRelativeDocLink?: (link: RelativeDocLink) => void;
+  /** Records an in-document jump to heading `id` (decoded, no `#`) in
+   * the URL. The page passes one that pushes a history entry, so the
+   * browser's Back/Forward (mouse buttons included) walk the sections
+   * the reader clicked. Defaults to replacing the fragment in place. */
+  onFragmentNavigate?: (id: string) => void;
 }
 
 // Extend the default sanitize schema to allow common HTML tags people put in
@@ -120,7 +125,7 @@ const diagramComponents: Components = {
 };
 
 const MarkdownRender = memo(
-  forwardRef<HTMLDivElement, Props>(({ content, baseUrl, sourceUrl, renderDiagrams = true, docLinkBase, onRelativeDocLink }, ref) => {
+  forwardRef<HTMLDivElement, Props>(({ content, baseUrl, sourceUrl, renderDiagrams = true, docLinkBase, onRelativeDocLink, onFragmentNavigate = setUrlFragment }, ref) => {
     const baseTransform = makeUrlTransform(baseUrl);
     const urlTransform = (url: string) => {
       const link = docLinkBase ? parseRelativeDocLink(url) : null;
@@ -185,9 +190,9 @@ const MarkdownRender = memo(
         if (!target) return;
         e.preventDefault();
         target.scrollIntoView({ behavior: "smooth", block: "start" });
-        setUrlFragment(decodeFragment(fragment));
+        onFragmentNavigate(decodeFragment(fragment));
       },
-      [sourceUrl, docLinkBase, onRelativeDocLink],
+      [sourceUrl, docLinkBase, onRelativeDocLink, onFragmentNavigate],
     );
 
     // Shareable section links: honour `#section` in the URL once the doc
