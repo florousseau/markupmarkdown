@@ -6,6 +6,7 @@ import rehypeRaw from "rehype-raw";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import rehypeSlug from "rehype-slug";
 import { makeUrlTransform } from "../utils/baseUrl";
+import { parseRelativeDocLink, type RelativeDocLink } from "../utils/docLinks";
 import {
   decodeFragment,
   findAnchorTarget,
@@ -27,6 +28,11 @@ interface Props {
    * revision is streaming in — a half-written diagram would re-render
    * and fail on every token. */
   renderDiagrams?: boolean;
+  /** Called instead of following a relative link to another markdown
+   * file (`[x](AUTRE.md#s)`). Set only for docs with no source URL —
+   * uploads — where the browser has nothing to resolve the link against;
+   * the page looks the file up among the creator's uploads. */
+  onRelativeDocLink?: (link: RelativeDocLink) => void;
 }
 
 // Extend the default sanitize schema to allow common HTML tags people put in
@@ -106,7 +112,7 @@ const diagramComponents: Components = {
 };
 
 const MarkdownRender = memo(
-  forwardRef<HTMLDivElement, Props>(({ content, baseUrl, sourceUrl, renderDiagrams = true }, ref) => {
+  forwardRef<HTMLDivElement, Props>(({ content, baseUrl, sourceUrl, renderDiagrams = true, onRelativeDocLink }, ref) => {
     const urlTransform = makeUrlTransform(baseUrl);
     // Intercept clicks on in-document anchor links so they scroll
     // within the page instead of triggering a full reload. Three URL
@@ -131,6 +137,12 @@ const MarkdownRender = memo(
         if (!href) return;
 
         let fragment = "";
+        const docLink = onRelativeDocLink ? parseRelativeDocLink(href) : null;
+        if (docLink && onRelativeDocLink) {
+          e.preventDefault();
+          onRelativeDocLink(docLink);
+          return;
+        }
         if (href.startsWith("#")) {
           fragment = href;
         } else {
@@ -157,7 +169,7 @@ const MarkdownRender = memo(
         target.scrollIntoView({ behavior: "smooth", block: "start" });
         setUrlFragment(decodeFragment(fragment));
       },
-      [sourceUrl],
+      [sourceUrl, onRelativeDocLink],
     );
 
     // Shareable section links: honour `#section` in the URL once the doc

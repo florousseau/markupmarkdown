@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -1846,6 +1847,47 @@ func (s *Store) FindLatestDocumentBySource(ctx context.Context, owner, repo, ref
 	}
 	if ref != "" {
 		filter["github_ref"] = ref
+	}
+	opts := options.FindOne().SetSort(bson.D{{Key: "updated_at", Value: -1}})
+	var doc models.Document
+	if err := s.Documents().FindOne(ctx, filter, opts).Decode(&doc); err != nil {
+		if errors.Is(err, mongo.ErrNoDocuments) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &doc, nil
+}
+
+// FindLatestUploadByFilename returns the most recently updated chain
+// root uploaded by creatorID whose original file name is `filename`
+// (case-insensitive). Uploads that predate the upload_filename field
+// match on title instead: the upload form derived the title from the
+// file name minus a trailing ".md", so `titles` carries both spellings.
+// Returns (nil, nil) when nothing matches.
+func (s *Store) FindLatestUploadByFilename(ctx context.Context, creatorID, filename string, titles []string) (*models.Document, error) {
+	if creatorID == "" || filename == "" {
+		return nil, nil
+	}
+	exactCI := func(v string) bson.M {
+		return bson.M{"$regex": "^" + regexp.QuoteMeta(v) + "$", "$options": "i"}
+	}
+	or := bson.A{bson.M{"upload_filename": exactCI(filename)}}
+	for _, t := range titles {
+		if t == "" {
+			continue
+		}
+		or = append(or, bson.M{
+			"upload_filename": bson.M{"$exists": false},
+			"title":           exactCI(t),
+		})
+	}
+	filter := bson.M{
+		"created_by_id": creatorID,
+		"origin":        "upload",
+		"deleted_at":    bson.M{"$exists": false},
+		"parent_id":     bson.M{"$exists": false}, // chain roots only; caller walks to leaf
+		"$or":           or,
 	}
 	opts := options.FindOne().SetSort(bson.D{{Key: "updated_at", Value: -1}})
 	var doc models.Document

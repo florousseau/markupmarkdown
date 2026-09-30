@@ -104,3 +104,27 @@ describe("MarkdownRender URL hash", () => {
     expect(ref.current?.className).toBe("mm-prose");
   });
 });
+
+describe("MarkdownRender relative doc links", () => {
+  const LINKS = "[Autre](AUTRE.md#section) · [Web](https://example.com/X.md) · [Ici](#intro)\n\n## Intro\n";
+
+  it("hands relative .md links to onRelativeDocLink instead of following them", () => {
+    const onLink = vi.fn();
+    const { getByText } = render(<MarkdownRender content={LINKS} onRelativeDocLink={onLink} />);
+    expect(fireEvent.click(getByText("Autre"))).toBe(false);
+    expect(onLink).toHaveBeenCalledWith({ href: "AUTRE.md#section", hash: "#section" });
+  });
+
+  it("leaves absolute and in-page links alone", () => {
+    const onLink = vi.fn();
+    const { getByText } = render(<MarkdownRender content={LINKS} onRelativeDocLink={onLink} />);
+    fireEvent.click(getByText("Web"));
+    fireEvent.click(getByText("Ici"));
+    expect(onLink).not.toHaveBeenCalled();
+  });
+
+  it("doesn't intercept when no handler is given (docs with a source URL)", () => {
+    const { getByText } = render(<MarkdownRender content={LINKS} />);
+    expect(fireEvent.click(getByText("Autre"))).toBe(true);
+  });
+});

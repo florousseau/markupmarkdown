@@ -24,6 +24,9 @@ type createDocumentRequest struct {
 	URL     string `json:"url,omitempty"`
 	Title   string `json:"title,omitempty"`
 	Content string `json:"content,omitempty"`
+	// Filename is the uploaded file's original name (content uploads
+	// only). Stored so cross-doc links can resolve — see resolveUploadLink.
+	Filename string `json:"filename,omitempty"`
 }
 
 type patchDocumentRequest struct {
@@ -472,6 +475,7 @@ func (a *API) createDocument(w http.ResponseWriter, r *http.Request) {
 		doc.Content = req.Content
 		doc.Origin = "upload"
 		doc.SourceKind = models.SourceKindUpload
+		doc.UploadFilename = uploadFilename(req.Filename)
 		doc.Title = req.Title
 		if doc.Title == "" {
 			doc.Title = "Untitled"

@@ -293,6 +293,9 @@ export interface MdDocument {
   /** Discriminates which set of source-specific fields are populated.
    * Newer than `origin`; switch on this in new code. */
   sourceKind?: "github_blob" | "gist" | "url" | "upload";
+  /** Original file name of an upload ("SPEC.md"); lets relative
+   * `[x](SPEC.md)` links in the creator's other uploads resolve here. */
+  uploadFilename?: string;
   content: string;
   private?: boolean;
   githubOwner?: string;
