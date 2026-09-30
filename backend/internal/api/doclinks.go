@@ -8,6 +8,8 @@ import (
 	"strings"
 
 	"github.com/gorilla/mux"
+
+	"markupmarkdown/internal/render"
 )
 
 // Cross-document links between uploaded docs.
@@ -18,6 +20,12 @@ import (
 // resolveUploadLink which of the SAME creator's uploads is called
 // AUTRE.md and navigates to that chain's latest revision. Scoping to
 // the creator keeps a link from landing on a stranger's README.md.
+//
+// Uploaded docs are readable by anyone holding their /d/:id URL, and
+// the resolver needs no sign-in, so guests follow links exactly like
+// the author. That same openness is why a name is only resolved when
+// the current doc actually links to it: otherwise one shared URL would
+// let anyone probe the creator's other uploads by guessing file names.
 
 // linkableExts are the file extensions treated as links to another doc.
 var linkableExts = map[string]bool{".md": true, ".markdown": true, ".mdx": true}
@@ -43,6 +51,17 @@ func linkTargetName(href string) (string, bool) {
 		return "", false
 	}
 	return name, true
+}
+
+// linksTo reports whether markdown `content` contains a link whose
+// target file name is `name` (case-insensitive, like the lookup).
+func linksTo(content, name string) bool {
+	for _, dest := range render.LinkDestinations(content) {
+		if n, ok := linkTargetName(dest); ok && strings.EqualFold(n, name) {
+			return true
+		}
+	}
+	return false
 }
 
 // uploadFilename normalizes the client-supplied file name of an upload
@@ -80,6 +99,13 @@ func (a *API) resolveUploadLink(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "href must be a relative link to a .md file")
 		return
 	}
+	notFound := func(msg string) {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": msg, "kind": accessKindNotFound})
+	}
+	if !linksTo(doc.Content, name) {
+		notFound(fmt.Sprintf("This document has no link to %s.", name))
+		return
+	}
 	ctx := r.Context()
 	// Revisions can be authored by anyone; the creator that scopes the
 	// lookup is the chain root's.
@@ -88,9 +114,6 @@ func (a *API) resolveUploadLink(w http.ResponseWriter, r *http.Request) {
 		if rd, err := a.store.RootDocument(ctx, doc.ID); err == nil && rd != nil {
 			root = rd
 		}
-	}
-	notFound := func(msg string) {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": msg, "kind": accessKindNotFound})
 	}
 	if root.CreatedByID == "" {
 		notFound(fmt.Sprintf("Can't follow %s: this document was uploaded without signing in, so there is no set of files to look in.", name))

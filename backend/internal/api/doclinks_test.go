@@ -63,3 +63,20 @@ func TestUploadTitleCandidates(t *testing.T) {
 		t.Errorf("got %v", got)
 	}
 }
+
+func TestLinksTo(t *testing.T) {
+	content := "Voir [autre](./docs/AUTRE.md#section), <a href=\"Raw.md\">raw</a>.\n\n" +
+		"```\n[code](Code.md)\n```\n"
+	cases := map[string]bool{
+		"AUTRE.md": true,
+		"autre.md": true, // lookup is case-insensitive too
+		"Raw.md":   true,
+		"Code.md":  false, // inside a code block — not a link
+		"Other.md": false,
+	}
+	for name, want := range cases {
+		if got := linksTo(content, name); got != want {
+			t.Errorf("linksTo(%q) = %v, want %v", name, got, want)
+		}
+	}
+}
