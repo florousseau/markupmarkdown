@@ -29,6 +29,11 @@ interface Props {
   onDelete: () => void;
 }
 
+// Router state on the revision-history links: the reader picked this
+// version on purpose, so DocumentPage skips its "newer revision exists"
+// prompt.
+const REVISION_HISTORY_NAV = { fromRevisionHistory: true };
+
 export default function DocumentToolbar({
   doc,
   me,
@@ -55,7 +60,7 @@ export default function DocumentToolbar({
           a single source file). */}
       {doc.parent && (
         <div className="text-xs text-muted mb-1 flex items-center gap-2 flex-wrap">
-          <Link to={`/d/${doc.parent.id}`} className="text-accent hover:underline">
+          <Link to={`/d/${doc.parent.id}`} state={REVISION_HISTORY_NAV} className="text-accent hover:underline">
             ← {doc.parent.revisionIndex ? `v${doc.parent.revisionIndex}` : "Previous version"}
           </Link>
           {doc.revisionIndex && (
@@ -225,7 +230,7 @@ export default function DocumentToolbar({
           Direct revisions:
           {doc.children.map((c, i) => (
             <span key={c.id} className="inline-flex items-center gap-1">
-              <Link to={`/d/${c.id}`} className="text-accent hover:underline">
+              <Link to={`/d/${c.id}`} state={REVISION_HISTORY_NAV} className="text-accent hover:underline">
                 v{c.revisionIndex ?? (doc.revisionIndex ?? 1) + i + 1}
               </Link>
               {c.revisionMeta?.generatedBy && (
