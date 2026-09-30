@@ -1389,12 +1389,26 @@ export default function DocumentPage() {
   // its anchored line into the viewport instead. The page scroll IS
   // the editor's scroll now (cm-scroller overflow: visible) so this
   // moves the body just like the view-mode branch.
+  //
+  // Scrolls once per activation (activeId × editing). `comments` stays a
+  // dependency only so an activation whose highlight isn't in the DOM
+  // yet can land once it appears; any other comments change — posting a
+  // new comment, a reply, an SSE refresh — must NOT re-scroll, or the
+  // page jumps back to a previously active comment the reader has since
+  // scrolled away from.
+  const scrolledActivationRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!activeId) return;
+    if (!activeId) {
+      scrolledActivationRef.current = null;
+      return;
+    }
+    const activation = `${activeId}|${editing ? "edit" : "view"}`;
+    if (scrolledActivationRef.current === activation) return;
     if (editing) {
       const c = comments.find((x) => x.id === activeId);
       const exact = c?.anchor?.exact || c?.originalExact || "";
       if (exact && editorRef.current) {
+        scrolledActivationRef.current = activation;
         editorRef.current.scrollAnchorIntoView(exact);
       }
       return;
@@ -1402,6 +1416,7 @@ export default function DocumentPage() {
     if (!contentRef.current) return;
     const rect = getHighlightRect(contentRef.current, activeId);
     if (!rect) return;
+    scrolledActivationRef.current = activation;
     const margin = 100;
     if (rect.top < margin || rect.bottom > window.innerHeight - margin) {
       window.scrollTo({
