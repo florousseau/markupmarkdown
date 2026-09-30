@@ -346,6 +346,12 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ author }),
     }),
+  /** Marks every open comment on this revision as done. */
+  resolveAllComments: (documentId: string, author: string) =>
+    req<{ resolved: number }>(`/api/documents/${documentId}/resolve-all`, {
+      method: "POST",
+      body: JSON.stringify({ author }),
+    }),
   reopenComment: (id: string) =>
     req<Comment>(`/api/comments/${id}/reopen`, { method: "POST" }),
   /** Manually re-anchor an orphan comment, or convert any comment to a

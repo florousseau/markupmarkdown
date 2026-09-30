@@ -173,6 +173,7 @@ func (a *API) Register(r *mux.Router) {
 	// suggested replacement, and resolves the comment.
 	r.HandleFunc("/api/comments/{id}/apply-suggestion", a.applySuggestion).Methods("POST")
 	r.HandleFunc("/api/documents/{id}/apply-suggestions", a.applyAllSuggestions).Methods("POST")
+	r.HandleFunc("/api/documents/{id}/resolve-all", a.resolveAllComments).Methods("POST")
 
 	r.HandleFunc("/api/me/notifications", a.listNotifications).Methods("GET")
 	r.HandleFunc("/api/me/notifications/read", a.markAllNotificationsRead).Methods("POST")
