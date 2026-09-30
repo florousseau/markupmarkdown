@@ -13,6 +13,9 @@ import type { Comment, MdDocument } from "../types";
 import MarkdownRender from "../components/MarkdownRender";
 import { baseURLForDoc } from "../utils/baseUrl";
 import { docLinkBase, type RelativeDocLink } from "../utils/docLinks";
+import { activeTocId, extractToc, fragmentForId, type TocItem } from "../utils/toc";
+import { findAnchorTarget, setUrlFragment } from "../utils/headingAnchor";
+import TocSidebar from "../components/TocSidebar";
 import { canonicalDocPath, rewriteToCanonical } from "../utils/canonicalUrl";
 import SelectionPopover from "../components/SelectionPopover";
 import NewCommentComposer from "../components/NewCommentComposer";
@@ -39,6 +42,12 @@ import { relaxAnchors } from "../utils/anchoredLayout";
 import { downloadAsMarkdown } from "../utils/download";
 
 type Filter = "open" | "unread" | "resolved" | "all";
+
+// localStorage key for the table-of-contents open/closed preference.
+const TOC_OPEN_KEY = "mm.tocOpen";
+// A heading counts as "current" once it scrolls under the sticky header;
+// matches the scroll-margin-top given to .mm-prose headings in styles.css.
+const TOC_ACTIVE_OFFSET = 96;
 
 export default function DocumentPage() {
   const { id } = useParams<{ id: string }>();
@@ -673,6 +682,60 @@ export default function DocumentPage() {
   // creator's upload with that file name and open its latest revision.
   // The hash rides along; MarkdownRender scrolls to it once the target
   // renders (or, same doc, on the hashchange).
+  // Left-hand table of contents. Items come from the rendered headings
+  // (view mode only — the editor has no rendered DOM, so the last list
+  // is kept and the sidebar says why it's inert). Open/closed is a
+  // per-browser preference.
+  const [tocOpen, setTocOpen] = useState(() => {
+    try {
+      return window.localStorage.getItem(TOC_OPEN_KEY) !== "0";
+    } catch {
+      return true;
+    }
+  });
+  const toggleToc = useCallback(() => {
+    setTocOpen((open) => {
+      try {
+        window.localStorage.setItem(TOC_OPEN_KEY, open ? "0" : "1");
+      } catch {
+        /* storage blocked — the toggle still works for this page view */
+      }
+      return !open;
+    });
+  }, []);
+  const [tocItems, setTocItems] = useState<TocItem[]>([]);
+  const [tocActive, setTocActive] = useState<string | null>(null);
+  useEffect(() => {
+    if (editing) return;
+    const root = contentRef.current;
+    setTocItems(root ? extractToc(root) : []);
+  }, [doc?.id, doc?.content, editing]);
+  useEffect(() => {
+    const root = contentRef.current;
+    if (editing || !root || tocItems.length === 0) return;
+    let frame = 0;
+    const update = () => {
+      frame = 0;
+      setTocActive(activeTocId(tocItems, root, TOC_ACTIVE_OFFSET));
+    };
+    const onScroll = () => {
+      if (!frame) frame = requestAnimationFrame(update);
+    };
+    update();
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => {
+      window.removeEventListener("scroll", onScroll);
+      if (frame) cancelAnimationFrame(frame);
+    };
+  }, [tocItems, editing]);
+  const selectTocItem = useCallback((item: TocItem) => {
+    const root = contentRef.current;
+    const el = root && findAnchorTarget(root, fragmentForId(item.id));
+    if (!el) return;
+    el.scrollIntoView({ behavior: "smooth", block: "start" });
+    setUrlFragment(fragmentForId(item.id));
+  }, []);
+
   const openRelativeDocLink = useCallback(
     async (link: RelativeDocLink) => {
       if (!id) return;
@@ -1440,6 +1503,18 @@ export default function DocumentPage() {
 
   return (
     <div className="flex min-h-full">
+      {tocItems.length > 0 && (
+        <TocSidebar
+          items={tocItems}
+          activeId={tocActive}
+          open={tocOpen}
+          onToggle={toggleToc}
+          onSelect={selectTocItem}
+          unavailableReason={
+            editing ? "The table of contents is available in reading mode." : undefined
+          }
+        />
+      )}
       {/* Main content — uses the page-level (body) scroll, not its own
           inner scroller. The sticky editor toolbar pins to the viewport
           as the user scrolls through a long document. Width fills the
