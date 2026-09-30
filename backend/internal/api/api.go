@@ -64,6 +64,7 @@ func (a *API) Register(r *mux.Router) {
 	// `/api/documents/{id}` patterns or gorilla/mux interprets
 	// "by-source" as an id and routes to getDocument.
 	r.HandleFunc("/api/documents/by-source", a.resolveBySource).Methods("GET")
+	r.HandleFunc("/api/documents/{id}/resolve-link", a.resolveUploadLink).Methods("GET")
 	r.HandleFunc("/api/me/trash", a.listTrash).Methods("GET")
 	r.HandleFunc("/api/documents/{id}", a.getDocument).Methods("GET")
 	r.HandleFunc("/api/documents/{id}", a.patchDocument).Methods("PATCH")

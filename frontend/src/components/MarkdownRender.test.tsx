@@ -104,3 +104,52 @@ describe("MarkdownRender URL hash", () => {
     expect(ref.current?.className).toBe("mm-prose");
   });
 });
+
+describe("MarkdownRender relative doc links", () => {
+  const LINKS = "[Autre](AUTRE.md#section) · [Web](https://example.com/X.md) · [Ici](#intro)\n\n## Intro\n";
+  const base = "/d/doc1/link/";
+
+  it("rewrites relative .md links to real in-app URLs", () => {
+    const { getByText } = render(<MarkdownRender content={LINKS} docLinkBase={base} />);
+    expect(getByText("Autre").getAttribute("href")).toBe("/d/doc1/link/AUTRE.md#section");
+    expect(getByText("Web").getAttribute("href")).toBe("https://example.com/X.md");
+  });
+
+  it("hands plain clicks to onRelativeDocLink instead of following them", () => {
+    const onLink = vi.fn();
+    const { getByText } = render(
+      <MarkdownRender content={LINKS} docLinkBase={base} onRelativeDocLink={onLink} />,
+    );
+    expect(fireEvent.click(getByText("Autre"))).toBe(false);
+    expect(onLink).toHaveBeenCalledWith({ name: "AUTRE.md", hash: "#section" });
+  });
+
+  it("lets modified clicks open the real URL (new tab / window)", () => {
+    const onLink = vi.fn();
+    const { getByText } = render(
+      <MarkdownRender content={LINKS} docLinkBase={base} onRelativeDocLink={onLink} />,
+    );
+    fireEvent.click(getByText("Autre"), { metaKey: true });
+    fireEvent.click(getByText("Autre"), { ctrlKey: true });
+    fireEvent.click(getByText("Autre"), { shiftKey: true });
+    expect(onLink).not.toHaveBeenCalled();
+  });
+
+  it("leaves absolute and in-page links alone", () => {
+    const onLink = vi.fn();
+    const { getByText } = render(
+      <MarkdownRender content={LINKS} docLinkBase={base} onRelativeDocLink={onLink} />,
+    );
+    fireEvent.click(getByText("Web"));
+    fireEvent.click(getByText("Ici"));
+    expect(onLink).not.toHaveBeenCalled();
+  });
+
+  it("doesn't touch links when no base is given (docs with a source URL)", () => {
+    const onLink = vi.fn();
+    const { getByText } = render(<MarkdownRender content={LINKS} onRelativeDocLink={onLink} />);
+    expect(getByText("Autre").getAttribute("href")).toBe("AUTRE.md#section");
+    fireEvent.click(getByText("Autre"));
+    expect(onLink).not.toHaveBeenCalled();
+  });
+});

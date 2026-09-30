@@ -12,6 +12,7 @@ import {
 import type { Comment, MdDocument } from "../types";
 import MarkdownRender from "../components/MarkdownRender";
 import { baseURLForDoc } from "../utils/baseUrl";
+import { docLinkBase, type RelativeDocLink } from "../utils/docLinks";
 import { canonicalDocPath, rewriteToCanonical } from "../utils/canonicalUrl";
 import SelectionPopover from "../components/SelectionPopover";
 import NewCommentComposer from "../components/NewCommentComposer";
@@ -666,6 +667,28 @@ export default function DocumentPage() {
       }
     },
     [toast]
+  );
+
+  // Relative `[x](AUTRE.md#s)` links in an uploaded doc: find the
+  // creator's upload with that file name and open its latest revision.
+  // The hash rides along; MarkdownRender scrolls to it once the target
+  // renders (or, same doc, on the hashchange).
+  const openRelativeDocLink = useCallback(
+    async (link: RelativeDocLink) => {
+      if (!id) return;
+      try {
+        const target = await api.resolveDocLink(id, link.name);
+        if (target.id === id) {
+          if (link.hash) window.location.hash = link.hash;
+          return;
+        }
+        navigate(`/d/${target.id}${link.hash}`);
+        if (!link.hash) window.scrollTo({ top: 0 });
+      } catch (err) {
+        toastError(err, "Couldn't open that link.");
+      }
+    },
+    [id, navigate, toastError]
   );
 
   async function submitNewComment(body: string) {
@@ -1545,6 +1568,8 @@ export default function DocumentPage() {
               content={doc.content}
               baseUrl={baseURLForDoc(doc.sourceUrl)}
               sourceUrl={doc.sourceUrl}
+              docLinkBase={doc.sourceUrl ? undefined : docLinkBase(doc.id)}
+              onRelativeDocLink={openRelativeDocLink}
             />
           )}
 

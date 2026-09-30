@@ -7,6 +7,12 @@ import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import rehypeSlug from "rehype-slug";
 import { makeUrlTransform } from "../utils/baseUrl";
 import {
+  docLinkHref,
+  parseDocLinkHref,
+  parseRelativeDocLink,
+  type RelativeDocLink,
+} from "../utils/docLinks";
+import {
   decodeFragment,
   findAnchorTarget,
   setUrlFragment,
@@ -27,6 +33,14 @@ interface Props {
    * revision is streaming in — a half-written diagram would re-render
    * and fail on every token. */
   renderDiagrams?: boolean;
+  /** Set only for docs with no source URL (uploads), where the browser
+   * has nothing to resolve `[x](AUTRE.md#s)` against. Such hrefs are
+   * rewritten to `${docLinkBase}AUTRE.md#s` (see utils/docLinks) — a
+   * real URL, so new-tab clicks and "copy link" work natively. */
+  docLinkBase?: string;
+  /** Plain left-clicks on those rewritten links call this instead of
+   * loading the intermediate /link/ page. */
+  onRelativeDocLink?: (link: RelativeDocLink) => void;
 }
 
 // Extend the default sanitize schema to allow common HTML tags people put in
@@ -106,8 +120,12 @@ const diagramComponents: Components = {
 };
 
 const MarkdownRender = memo(
-  forwardRef<HTMLDivElement, Props>(({ content, baseUrl, sourceUrl, renderDiagrams = true }, ref) => {
-    const urlTransform = makeUrlTransform(baseUrl);
+  forwardRef<HTMLDivElement, Props>(({ content, baseUrl, sourceUrl, renderDiagrams = true, docLinkBase, onRelativeDocLink }, ref) => {
+    const baseTransform = makeUrlTransform(baseUrl);
+    const urlTransform = (url: string) => {
+      const link = docLinkBase ? parseRelativeDocLink(url) : null;
+      return link && docLinkBase ? docLinkHref(docLinkBase, link) : baseTransform(url);
+    };
     // Intercept clicks on in-document anchor links so they scroll
     // within the page instead of triggering a full reload. Three URL
     // shapes count as "same document":
@@ -131,6 +149,18 @@ const MarkdownRender = memo(
         if (!href) return;
 
         let fragment = "";
+        // Modified clicks (new tab / window) fall through to the real href.
+        const plainClick =
+          e.button === 0 && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey;
+        const docLink =
+          docLinkBase && onRelativeDocLink && plainClick
+            ? parseDocLinkHref(docLinkBase, href)
+            : null;
+        if (docLink && onRelativeDocLink) {
+          e.preventDefault();
+          onRelativeDocLink(docLink);
+          return;
+        }
         if (href.startsWith("#")) {
           fragment = href;
         } else {
@@ -157,7 +187,7 @@ const MarkdownRender = memo(
         target.scrollIntoView({ behavior: "smooth", block: "start" });
         setUrlFragment(decodeFragment(fragment));
       },
-      [sourceUrl],
+      [sourceUrl, docLinkBase, onRelativeDocLink],
     );
 
     // Shareable section links: honour `#section` in the URL once the doc

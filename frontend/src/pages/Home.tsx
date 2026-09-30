@@ -170,7 +170,7 @@ export default function HomePage() {
     try {
       const text = await file.text();
       const title = file.name.replace(/\.md$/i, "");
-      const doc = await api.createFromContent(text, title);
+      const doc = await api.createFromContent(text, title, file.name);
       navigate(`/d/${doc.id}`);
     } catch (err) {
       setErrFrom(err);

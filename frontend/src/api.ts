@@ -100,11 +100,17 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ url, title }),
     }),
-  createFromContent: (content: string, title: string) =>
+  createFromContent: (content: string, title: string, filename?: string) =>
     req<MdDocument>("/api/documents", {
       method: "POST",
-      body: JSON.stringify({ content, title }),
+      body: JSON.stringify({ content, title, filename }),
     }),
+  /** Resolves a relative `.md` link inside an uploaded doc to the
+   * latest revision of the same creator's upload with that file name. */
+  resolveDocLink: (docId: string, href: string) =>
+    req<{ id: string; title: string }>(
+      `/api/documents/${docId}/resolve-link?href=${encodeURIComponent(href)}`,
+    ),
   renameDocument: (id: string, title: string) =>
     req<MdDocument>(`/api/documents/${id}`, {
       method: "PATCH",
