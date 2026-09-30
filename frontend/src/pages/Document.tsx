@@ -12,7 +12,7 @@ import {
 import type { Comment, MdDocument } from "../types";
 import MarkdownRender from "../components/MarkdownRender";
 import { baseURLForDoc } from "../utils/baseUrl";
-import type { RelativeDocLink } from "../utils/docLinks";
+import { docLinkBase, type RelativeDocLink } from "../utils/docLinks";
 import { canonicalDocPath, rewriteToCanonical } from "../utils/canonicalUrl";
 import SelectionPopover from "../components/SelectionPopover";
 import NewCommentComposer from "../components/NewCommentComposer";
@@ -677,7 +677,7 @@ export default function DocumentPage() {
     async (link: RelativeDocLink) => {
       if (!id) return;
       try {
-        const target = await api.resolveDocLink(id, link.href);
+        const target = await api.resolveDocLink(id, link.name);
         if (target.id === id) {
           if (link.hash) window.location.hash = link.hash;
           return;
@@ -1568,7 +1568,8 @@ export default function DocumentPage() {
               content={doc.content}
               baseUrl={baseURLForDoc(doc.sourceUrl)}
               sourceUrl={doc.sourceUrl}
-              onRelativeDocLink={doc.sourceUrl ? undefined : openRelativeDocLink}
+              docLinkBase={doc.sourceUrl ? undefined : docLinkBase(doc.id)}
+              onRelativeDocLink={openRelativeDocLink}
             />
           )}
 
