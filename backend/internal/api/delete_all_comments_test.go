@@ -113,3 +113,18 @@ func TestGetDocument_IsOwner(t *testing.T) {
 		t.Error("stranger: isOwner=true")
 	}
 }
+
+// Regression: the Bearer guard on cookie-only endpoints must not depend on
+// currentUser having run first (token info is attached lazily by it).
+// revokeToken checked tokenInfoFromRequest before any auth lookup, so a
+// token could revoke its owner's tokens.
+func TestRevokeToken_BearerForbidden(t *testing.T) {
+	srv, st, _ := newTestServer(t)
+	user := testutil.NewTestUser(t, st)
+	raw, _ := testutil.NewAPIToken(t, st, user.ID, models.TokenScopeAdmin)
+	_, victim := testutil.NewAPIToken(t, st, user.ID, models.TokenScopeRead)
+	status, body := doJSON(t, srv, "DELETE", "/api/me/tokens/"+victim.ID, nil, withBearer(raw))
+	if status != 403 {
+		t.Fatalf("status=%d body=%s, want 403", status, body)
+	}
+}

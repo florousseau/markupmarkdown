@@ -141,7 +141,7 @@ Some endpoints must never be reachable via a token, even with admin scope, becau
 - `GET  /api/me/tokens/:id/activity`
 - `PUT  /api/me/anthropic-key` (store secret)
 
-Pattern: `if _, hasToken := tokenInfoFromRequest(r); hasToken { 403 }`. Don't loosen this.
+Pattern: `if hasBearer(r) { 403 }` ([auth.go](backend/internal/api/auth.go)). Don't loosen this. Don't use `tokenInfoFromRequest` for this guard: token info is attached lazily by `currentUser`, so a check that runs before any auth lookup sees nothing and lets the token through (`revokeToken` had exactly this hole). Handlers that already call `currentUser` first are safe either way, but `hasBearer` is order-independent.
 
 ### 3. Bot identity is dynamic, not snapshotted
 
@@ -218,7 +218,7 @@ Beyond doc-access + scope, [comments.go](backend/internal/api/comments.go) `patc
 
 ### 14. Credential-setting endpoints are cookie-only
 
-`POST/PATCH/DELETE /api/me/tokens*`, `PUT/DELETE /api/me/anthropic-key`, and any other endpoint that stores or rotates a user credential must reject Bearer-token auth with 403. Pattern: `if _, hasToken := tokenInfoFromRequest(r); hasToken { 403 }`. A leaked token must not be able to swap the user's Anthropic key, mint new tokens, or change scopes on existing ones.
+`POST/PATCH/DELETE /api/me/tokens*`, `PUT/DELETE /api/me/anthropic-key`, and any other endpoint that stores or rotates a user credential must reject Bearer-token auth with 403. Pattern: `if hasBearer(r) { 403 }` (see rule #2 for why not `tokenInfoFromRequest`). A leaked token must not be able to swap the user's Anthropic key, mint new tokens, or change scopes on existing ones.
 
 ### 15. Review coordination (three review states + push gates)
 

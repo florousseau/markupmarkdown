@@ -460,7 +460,7 @@ func (a *API) deleteAllComments(w http.ResponseWriter, r *http.Request) {
 		a.writeAccessError(w, r, accErr)
 		return
 	}
-	if _, hasToken := tokenInfoFromRequest(r); hasToken {
+	if hasBearer(r) {
 		writeError(w, http.StatusForbidden, "deleting all comments requires a browser session, not an API token")
 		return
 	}

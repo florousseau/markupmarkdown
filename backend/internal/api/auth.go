@@ -123,6 +123,16 @@ func contextWithTokenInfo(parent context.Context, info tokenInfo) context.Contex
 	return context.WithValue(parent, tokenInfoKey{}, info)
 }
 
+// hasBearer reports whether the request presents a Bearer token at all.
+// Use it (not tokenInfoFromRequest) to guard cookie-session-only
+// endpoints: token info is attached lazily by currentUser, so a
+// tokenInfoFromRequest check that runs before any auth lookup sees
+// nothing and lets the token through. Keying on the header also refuses
+// invalid or expired tokens, which is the safe answer for these routes.
+func hasBearer(r *http.Request) bool {
+	return authTokenFromHeader(r) != ""
+}
+
 func tokenInfoFromRequest(r *http.Request) (tokenInfo, bool) {
 	v, ok := r.Context().Value(tokenInfoKey{}).(tokenInfo)
 	return v, ok
