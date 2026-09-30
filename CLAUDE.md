@@ -141,7 +141,7 @@ Some endpoints must never be reachable via a token, even with admin scope, becau
 - `GET  /api/me/tokens/:id/activity`
 - `PUT  /api/me/anthropic-key` (store secret)
 
-Pattern: `if _, hasToken := tokenInfoFromRequest(r); hasToken { 403 }`. Don't loosen this.
+Pattern: `if hasBearer(r) { 403 }` ([auth.go](backend/internal/api/auth.go)). Don't loosen this. Don't use `tokenInfoFromRequest` for this guard: token info is attached lazily by `currentUser`, so a check that runs before any auth lookup sees nothing and lets the token through (`revokeToken` had exactly this hole). Handlers that already call `currentUser` first are safe either way, but `hasBearer` is order-independent.
 
 ### 3. Bot identity is dynamic, not snapshotted
 
@@ -214,9 +214,11 @@ User Anthropic API keys are AES-256-GCM encrypted via `secrets.Vault` (master ke
 
 Beyond doc-access + scope, [comments.go](backend/internal/api/comments.go) `patchComment` / `deleteComment` / `updateReply` / `deleteReply` call `requireMineComment` or `requireMineReply`. The check is `AuthorID == currentUser.ID`. Agent comments stamp `AuthorID` to the token's owning user, so the same equality covers "I wrote this" and "a bot I own wrote this." Even an admin-scope token cannot edit or delete content authored by a different user. The frontend's `comment.mine` boolean is the server-computed answer; the UI gates the edit/delete buttons on it. Keep both in sync.
 
+**One deliberate exception:** the document's owner (the chain root's `CreatedByID`, see `isDocOwner`) can wipe every comment on a revision via `DELETE /api/documents/:id/comments` (`deleteAllComments`). It is **cookie-session only** — Bearer tokens get 403 at any scope — because it's an irreversible hard delete of other people's content. The UI gates it on `doc.isOwner`. Don't widen it to tokens, and don't add per-comment owner overrides on top of it.
+
 ### 14. Credential-setting endpoints are cookie-only
 
-`POST/PATCH/DELETE /api/me/tokens*`, `PUT/DELETE /api/me/anthropic-key`, and any other endpoint that stores or rotates a user credential must reject Bearer-token auth with 403. Pattern: `if _, hasToken := tokenInfoFromRequest(r); hasToken { 403 }`. A leaked token must not be able to swap the user's Anthropic key, mint new tokens, or change scopes on existing ones.
+`POST/PATCH/DELETE /api/me/tokens*`, `PUT/DELETE /api/me/anthropic-key`, and any other endpoint that stores or rotates a user credential must reject Bearer-token auth with 403. Pattern: `if hasBearer(r) { 403 }` (see rule #2 for why not `tokenInfoFromRequest`). A leaked token must not be able to swap the user's Anthropic key, mint new tokens, or change scopes on existing ones.
 
 ### 15. Review coordination (three review states + push gates)
 

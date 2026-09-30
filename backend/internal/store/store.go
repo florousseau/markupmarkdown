@@ -2081,6 +2081,16 @@ func (s *Store) ResolveOpenComments(ctx context.Context, docID, by string, at ti
 	return res.ModifiedCount, nil
 }
 
+// DeleteCommentsForDocument hard-deletes every comment (and with it
+// every reply) on docID. Returns how many were removed.
+func (s *Store) DeleteCommentsForDocument(ctx context.Context, docID string) (int64, error) {
+	res, err := s.Comments().DeleteMany(ctx, bson.M{"document_id": docID})
+	if err != nil {
+		return 0, err
+	}
+	return res.DeletedCount, nil
+}
+
 func (s *Store) DeleteComment(ctx context.Context, id string) error {
 	_, err := s.Comments().DeleteOne(ctx, bson.M{"_id": id})
 	return err

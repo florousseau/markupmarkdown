@@ -352,6 +352,12 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ author }),
     }),
+  /** Owner only, browser session only: permanently deletes every
+   * comment and reply on this revision. */
+  deleteAllComments: (documentId: string) =>
+    req<{ deleted: number }>(`/api/documents/${documentId}/comments`, {
+      method: "DELETE",
+    }),
   reopenComment: (id: string) =>
     req<Comment>(`/api/comments/${id}/reopen`, { method: "POST" }),
   /** Manually re-anchor an orphan comment, or convert any comment to a

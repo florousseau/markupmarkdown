@@ -68,6 +68,7 @@ export default function DocumentPage() {
   const toast = useToast();
   const [applyingAll, setApplyingAll] = useState(false);
   const [resolvingAll, setResolvingAll] = useState(false);
+  const [deletingAll, setDeletingAll] = useState(false);
   const [searchParams, setSearchParams] = useSearchParams();
   const [showSignIn, setShowSignIn] = useState(false);
   const [pendingAction, setPendingAction] = useState<(() => void) | null>(null);
@@ -1329,6 +1330,33 @@ export default function DocumentPage() {
       setResolvingAll(false);
     }
   }
+  // Owner-only wipe of this revision's comments (everyone's). Hard
+  // delete with no undo, so it sits behind a danger confirm that says so.
+  async function handleDeleteAll() {
+    if (!id || deletingAll) return;
+    const n = comments.length;
+    const ok = await dialog.confirm({
+      title: `Delete all ${n} comments?`,
+      body:
+        "This permanently deletes every comment and reply on this revision, " +
+        "including other people's. It can't be undone. Comments on other " +
+        "revisions are not affected.",
+      confirmLabel: "Delete all",
+      danger: true,
+    });
+    if (!ok) return;
+    setDeletingAll(true);
+    try {
+      const res = await api.deleteAllComments(id);
+      applyMutation(() => []);
+      setActiveId(null);
+      toast.success(`Deleted ${res.deleted} comments.`);
+    } catch (err) {
+      toastError(err, "Couldn't delete the comments.");
+    } finally {
+      setDeletingAll(false);
+    }
+  }
   async function handleReply(c: Comment, body: string) {
     const author = user?.name || user?.login || getAuthor() || "Anonymous";
     try {
@@ -1892,6 +1920,19 @@ export default function DocumentPage() {
                 className="px-2.5 py-1 rounded border border-rule text-ink hover:bg-soft disabled:opacity-50 font-medium"
               >
                 {resolvingAll ? "Marking…" : "Mark all done"}
+              </button>
+            </div>
+          )}
+          {/* Owner-only, deliberately low-key: a destructive action
+              shouldn't compete with the everyday controls above. */}
+          {doc.isOwner && comments.length > 0 && (
+            <div className="px-4 pb-2 -mt-1 flex justify-end text-xs">
+              <button
+                onClick={handleDeleteAll}
+                disabled={deletingAll}
+                className="text-faint hover:text-danger disabled:opacity-50"
+              >
+                {deletingAll ? "Deleting…" : "Delete all comments"}
               </button>
             </div>
           )}

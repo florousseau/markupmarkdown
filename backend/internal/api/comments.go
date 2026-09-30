@@ -431,6 +431,59 @@ func (a *API) deleteComment(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// isDocOwner reports whether userID created doc's revision chain. The
+// chain root's CreatedByID is the owner: revisions can be written by
+// anyone, anonymous uploads have no owner at all.
+func (a *API) isDocOwner(ctx context.Context, doc *models.Document, userID string) bool {
+	if doc == nil || userID == "" {
+		return false
+	}
+	root := doc
+	if doc.ParentID != "" {
+		if rd, err := a.store.RootDocument(ctx, doc.ID); err == nil && rd != nil {
+			root = rd
+		}
+	}
+	return root.CreatedByID != "" && root.CreatedByID == userID
+}
+
+// deleteAllComments is DELETE /api/documents/:id/comments — the doc
+// owner wipes every comment and reply on this revision, everyone's
+// included. The one deliberate exception to author-only delete (rule
+// #13): the owner of the document decides what its review thread holds.
+// Irreversible (hard delete, like deleting one comment), so it is
+// cookie-session only — a leaked token, even admin-scoped, must never be
+// able to erase a document's whole discussion.
+func (a *API) deleteAllComments(w http.ResponseWriter, r *http.Request) {
+	doc, accErr := a.checkDocAccess(r, mux.Vars(r)["id"])
+	if accErr != nil {
+		a.writeAccessError(w, r, accErr)
+		return
+	}
+	if hasBearer(r) {
+		writeError(w, http.StatusForbidden, "deleting all comments requires a browser session, not an API token")
+		return
+	}
+	user := a.currentUser(r)
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, "sign in required")
+		return
+	}
+	if !a.isDocOwner(r.Context(), doc, user.ID) {
+		writeError(w, http.StatusForbidden, "only the document's owner can delete all of its comments")
+		return
+	}
+	n, err := a.store.DeleteCommentsForDocument(r.Context(), doc.ID)
+	if err != nil {
+		internalError(w, "store.delete_comments_for_document", err)
+		return
+	}
+	if n > 0 {
+		a.hub.Broadcast(doc.ID, "comments-updated")
+	}
+	writeJSON(w, http.StatusOK, map[string]int64{"deleted": n})
+}
+
 func (a *API) resolveComment(w http.ResponseWriter, r *http.Request) {
 	id := mux.Vars(r)["id"]
 	if _, _, accErr := a.checkCommentAccess(r, id); accErr != nil {
