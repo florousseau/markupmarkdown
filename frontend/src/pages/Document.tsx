@@ -23,6 +23,7 @@ import { docLinkBase, type RelativeDocLink } from "../utils/docLinks";
 import { activeTocId, extractToc, fragmentForId, type TocItem } from "../utils/toc";
 import { decodeFragment, findAnchorTarget } from "../utils/headingAnchor";
 import { loadScroll, saveScroll } from "../utils/scrollMemory";
+import { isCommentUnread } from "../utils/unread";
 import TocSidebar from "../components/TocSidebar";
 import BackToTop from "../components/BackToTop";
 import { canonicalDocPath, rewriteToCanonical } from "../utils/canonicalUrl";
@@ -1374,22 +1375,11 @@ export default function DocumentPage() {
     }
   }
 
-  // A comment counts as "unread" when it's newer than the user's previous
-  // open of this doc. Anchored on previouslyViewedAt from getDocument —
-  // first-ever visit returns no prior, so nothing is unread.
+  // Unread = something new written by someone else since the previous
+  // open of this doc (see utils/unread). First-ever visit returns no
+  // prior view, so nothing is unread.
   const isUnread = useCallback(
-    (c: Comment) => {
-      if (!doc?.previouslyViewedAt) return false;
-      if (sessionReadIds.has(c.id)) return false;
-      const prev = Date.parse(doc.previouslyViewedAt);
-      // Latest activity on a thread = max(comment.updatedAt, last reply).
-      let latest = Date.parse(c.updatedAt);
-      for (const r of c.replies) {
-        const t = Date.parse(r.updatedAt);
-        if (t > latest) latest = t;
-      }
-      return latest > prev;
-    },
+    (c: Comment) => isCommentUnread(c, doc?.previouslyViewedAt, sessionReadIds),
     [doc?.previouslyViewedAt, sessionReadIds]
   );
 
