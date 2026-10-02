@@ -1,5 +1,12 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
+import {
+  Link,
+  useLocation,
+  useNavigate,
+  useNavigationType,
+  useParams,
+  useSearchParams,
+} from "react-router-dom";
 import { api, APIError } from "../api";
 import ErrorBlock from "../components/ErrorBlock";
 import type { AnchorSpec } from "../utils/anchor";
@@ -12,6 +19,13 @@ import {
 import type { Comment, MdDocument } from "../types";
 import MarkdownRender from "../components/MarkdownRender";
 import { baseURLForDoc } from "../utils/baseUrl";
+import { docLinkBase, type RelativeDocLink } from "../utils/docLinks";
+import { activeTocId, extractToc, fragmentForId, type TocItem } from "../utils/toc";
+import { decodeFragment, findAnchorTarget } from "../utils/headingAnchor";
+import { loadScroll, saveScroll } from "../utils/scrollMemory";
+import { isCommentUnread } from "../utils/unread";
+import TocSidebar from "../components/TocSidebar";
+import BackToTop from "../components/BackToTop";
 import { canonicalDocPath, rewriteToCanonical } from "../utils/canonicalUrl";
 import SelectionPopover from "../components/SelectionPopover";
 import NewCommentComposer from "../components/NewCommentComposer";
@@ -31,6 +45,7 @@ import SignInModal from "../components/SignInModal";
 import APIKeyModal from "../components/APIKeyModal";
 import ReviseModal from "../components/ReviseModal";
 import ShareModal from "../components/ShareModal";
+import ExportCommentsModal from "../components/ExportCommentsModal";
 import { useDialog } from "../components/Dialogs";
 import { useToast, toastMessageFor } from "../components/Toast";
 import { useSessionReadIds } from "../utils/sessionReadIds";
@@ -39,19 +54,28 @@ import { downloadAsMarkdown } from "../utils/download";
 
 type Filter = "open" | "unread" | "resolved" | "all";
 
+// localStorage key for the table-of-contents open/closed preference.
+const TOC_OPEN_KEY = "mm.tocOpen";
+// A heading counts as "current" once it scrolls under the sticky header;
+// matches the scroll-margin-top given to .mm-prose headings in styles.css.
+const TOC_ACTIVE_OFFSET = 96;
+
 export default function DocumentPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user, githubRepoAccess } = useAuth();
   const dialog = useDialog();
   const toast = useToast();
   const [applyingAll, setApplyingAll] = useState(false);
+  const [resolvingAll, setResolvingAll] = useState(false);
+  const [deletingAll, setDeletingAll] = useState(false);
   const [searchParams, setSearchParams] = useSearchParams();
   const [showSignIn, setShowSignIn] = useState(false);
   const [pendingAction, setPendingAction] = useState<(() => void) | null>(null);
   const [showAPIKey, setShowAPIKey] = useState(false);
   const [showRevise, setShowRevise] = useState(false);
   const [showShare, setShowShare] = useState(false);
+  const [showExport, setShowExport] = useState(false);
   const [reviseSignInExplain, setReviseSignInExplain] = useState(false);
 
   const [doc, setDoc] = useState<MdDocument | null>(null);
@@ -116,6 +140,7 @@ export default function DocumentPage() {
   // to it; the editor pane handles the textarea + live preview.
   const [editing, setEditing] = useState(false);
   const [editSaving, setEditSaving] = useState(false);
+  const [uploadingVersion, setUploadingVersion] = useState(false);
   const [showPushback, setShowPushback] = useState(false);
   // editLock holds the current soft-lock state for the doc. When set
   // and !mine, the toolbar's Edit button is hidden and a banner says
@@ -221,11 +246,73 @@ export default function DocumentPage() {
     };
   }, [id]);
 
-  // Older revisions no longer trigger a "newer version exists" popup.
-  // The doc list dedupes to leaves, so anyone landing on an older
-  // revision did so deliberately (via toolbar breadcrumb, history,
-  // or a deep link). The toolbar's "Latest revision: v3 →" link gives
-  // them a one-click path forward without yanking the page.
+  // Landing on an older revision (a shared /d/:id, a cross-doc link to a
+  // since-edited file, browser history…) offers the latest one in an
+  // in-app dialog. Never forced: "Stay" keeps the page as is, and the
+  // toolbar's "Latest: v3 →" link remains. Skipped when the reader got
+  // here on purpose — the toolbar's revision-history links (router
+  // state), a ?comment= deep link — and asked at most once per revision
+  // per tab.
+  const location = useLocation();
+  const newerPromptedRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    const latest = doc?.latestDescendant;
+    if (!doc || !latest || latest.id === doc.id) return;
+    if (newerPromptedRef.current.has(doc.id)) return;
+    newerPromptedRef.current.add(doc.id);
+    const fromHistory = (location.state as { fromRevisionHistory?: boolean } | null)
+      ?.fromRevisionHistory;
+    if (fromHistory || searchParams.has("comment")) return;
+    let cancelled = false;
+    const viewing = doc.revisionIndex ? `v${doc.revisionIndex}` : "an older version";
+    const newest = latest.revisionIndex ? `v${latest.revisionIndex}` : "a newer version";
+    void dialog
+      .confirm({
+        title: "A newer revision exists",
+        body: `You're viewing ${viewing} of this document. The latest is ${newest}.`,
+        confirmLabel: "Open latest",
+        cancelLabel: "Stay on this version",
+      })
+      .then((open) => {
+        if (open && !cancelled) navigate(`/d/${latest.id}${window.location.hash}`);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // Keyed on the loaded doc only: re-running on every location or
+    // search-param change would re-prompt after "Stay".
+  }, [doc?.id]);
+
+  // Reading position per history entry (utils/scrollMemory). Saved while
+  // a loaded doc scrolls — never during the "Loading…" state, whose short
+  // page would clamp scrollY and overwrite the real position — and
+  // restored when Back/Forward lands on a doc that had to reload (e.g.
+  // back from a linked file). Section jumps within one doc keep the
+  // browser's native restoration: the content never went away.
+  const navigationType = useNavigationType();
+  useEffect(() => {
+    if (!doc) return;
+    const entry = location.key;
+    let frame = 0;
+    const onScroll = () => {
+      if (frame) return;
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        saveScroll(entry, window.scrollY);
+      });
+    };
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => {
+      window.removeEventListener("scroll", onScroll);
+      if (frame) cancelAnimationFrame(frame);
+    };
+  }, [doc, location.key]);
+  useEffect(() => {
+    if (!doc || navigationType !== "POP") return;
+    const y = loadScroll(location.key);
+    if (y != null) window.scrollTo(0, y);
+    // Once per doc load: later same-doc POPs are the browser's to restore.
+  }, [doc?.id]);
 
   // Apply highlights after every render of doc content / comments / active
   useLayoutEffect(() => {
@@ -667,6 +754,105 @@ export default function DocumentPage() {
     [toast]
   );
 
+  // Relative `[x](AUTRE.md#s)` links in an uploaded doc: find the
+  // creator's upload with that file name and open its latest revision.
+  // The hash rides along; MarkdownRender scrolls to it once the target
+  // renders (or, same doc, on the hashchange).
+  // Left-hand table of contents. Items come from the rendered headings
+  // (view mode only — the editor has no rendered DOM, so the last list
+  // is kept and the sidebar says why it's inert). Open/closed is a
+  // per-browser preference.
+  const [tocOpen, setTocOpen] = useState(() => {
+    try {
+      return window.localStorage.getItem(TOC_OPEN_KEY) !== "0";
+    } catch {
+      return true;
+    }
+  });
+  const toggleToc = useCallback(() => {
+    setTocOpen((open) => {
+      try {
+        window.localStorage.setItem(TOC_OPEN_KEY, open ? "0" : "1");
+      } catch {
+        /* storage blocked — the toggle still works for this page view */
+      }
+      return !open;
+    });
+  }, []);
+  const [tocItems, setTocItems] = useState<TocItem[]>([]);
+  const [tocActive, setTocActive] = useState<string | null>(null);
+  useEffect(() => {
+    if (editing) return;
+    const root = contentRef.current;
+    setTocItems(root ? extractToc(root) : []);
+  }, [doc?.id, doc?.content, editing]);
+  useEffect(() => {
+    const root = contentRef.current;
+    if (editing || !root || tocItems.length === 0) return;
+    let frame = 0;
+    const update = () => {
+      frame = 0;
+      setTocActive(activeTocId(tocItems, root, TOC_ACTIVE_OFFSET));
+    };
+    const onScroll = () => {
+      if (!frame) frame = requestAnimationFrame(update);
+    };
+    update();
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => {
+      window.removeEventListener("scroll", onScroll);
+      if (frame) cancelAnimationFrame(frame);
+    };
+  }, [tocItems, editing]);
+  // In-document jumps (heading links, TOC) push a history entry, so the
+  // browser's Back/Forward — mouse side buttons included — walk the
+  // sections the reader clicked, and Back from the first one returns to
+  // where they clicked (native same-document scroll restoration). Pushed
+  // as /d/:id, a path this route owns, so going back never remounts the
+  // page through the GitHub-URL resolver.
+  const pushFragment = useCallback(
+    (fragment: string) => {
+      if (!id) return;
+      const hash = `#${encodeURIComponent(fragment)}`;
+      if (window.location.hash === hash) return;
+      navigate(`/d/${id}${window.location.search}${hash}`);
+    },
+    [id, navigate],
+  );
+  const selectTocItem = useCallback(
+    (item: TocItem) => {
+      const root = contentRef.current;
+      const el = root && findAnchorTarget(root, fragmentForId(item.id));
+      if (!el) return;
+      el.scrollIntoView({ behavior: "smooth", block: "start" });
+      pushFragment(fragmentForId(item.id));
+    },
+    [pushFragment],
+  );
+
+  const openRelativeDocLink = useCallback(
+    async (link: RelativeDocLink) => {
+      if (!id) return;
+      try {
+        const target = await api.resolveDocLink(id, link.name);
+        if (target.id === id) {
+          const root = contentRef.current;
+          const el = link.hash && root ? findAnchorTarget(root, link.hash) : null;
+          if (el) {
+            el.scrollIntoView({ behavior: "smooth", block: "start" });
+            pushFragment(decodeFragment(link.hash));
+          }
+          return;
+        }
+        navigate(`/d/${target.id}${link.hash}`);
+        if (!link.hash) window.scrollTo({ top: 0 });
+      } catch (err) {
+        toastError(err, "Couldn't open that link.");
+      }
+    },
+    [id, navigate, toastError, pushFragment]
+  );
+
   async function submitNewComment(body: string) {
     if (!id || !composer) return;
     const author = user?.name || user?.login || getAuthor() || "Anonymous";
@@ -764,6 +950,39 @@ export default function DocumentPage() {
       toastError(err, "Couldn't save your edit.");
     } finally {
       setEditSaving(false);
+    }
+  }
+
+  // Upload a local .md as the next version. Same endpoint as a manual
+  // edit, so the server carries open comments forward and re-anchors
+  // them; the toast reports how many made it and how many orphaned so
+  // the user knows to check the orphan list.
+  async function handleUploadVersion(file: File) {
+    if (!doc || uploadingVersion) return;
+    setUploadingVersion(true);
+    try {
+      const content = await file.text();
+      const next = await api.createManualRevision(doc.id, { content });
+      let summary = "";
+      try {
+        const cs = await api.listComments(next.id);
+        const anchored = cs.filter((c) => !!c.anchor?.exact || c.orphan);
+        const orphans = anchored.filter((c) => c.orphan).length;
+        const fuzzy = anchored.filter((c) => c.fuzzyReanchored).length;
+        if (anchored.length > 0) {
+          summary = ` — ${anchored.length - orphans} comment${anchored.length - orphans === 1 ? "" : "s"} re-anchored`;
+          if (fuzzy > 0) summary += ` (${fuzzy} approximately)`;
+          if (orphans > 0) summary += `, ${orphans} orphaned (see the list below the doc)`;
+        }
+      } catch {
+        // Summary is best-effort; the revision itself succeeded.
+      }
+      toast.success(`Uploaded "${file.name}" as a new revision${summary}.`);
+      navigate(`/d/${next.id}`);
+    } catch (err) {
+      toastError(err, "Couldn't upload the new version.");
+    } finally {
+      setUploadingVersion(false);
     }
   }
 
@@ -1080,6 +1299,64 @@ export default function DocumentPage() {
       setApplyingAll(false);
     }
   }
+  // Mark every open comment on this revision done: one confirm, one
+  // request. Local state is flipped optimistically-after-success rather
+  // than refetched — the server resolves exactly the comments that were
+  // open, which is what this list holds.
+  async function handleResolveAll() {
+    if (!id || resolvingAll) return;
+    const n = comments.filter((c) => !c.resolved).length;
+    const ok = await dialog.confirm({
+      title: `Mark ${n} comments as done?`,
+      body:
+        "Every open comment on this revision is resolved. Each one can " +
+        "still be reopened from the Done filter.",
+      confirmLabel: "Mark all done",
+    });
+    if (!ok) return;
+    setResolvingAll(true);
+    const by = user?.name || user?.login || getAuthor() || "Anonymous";
+    try {
+      const res = await api.resolveAllComments(id, by);
+      const at = new Date().toISOString();
+      applyMutation((prev) =>
+        prev.map((c) => (c.resolved ? c : { ...c, resolved: true, resolvedBy: by, resolvedAt: at })),
+      );
+      setActiveId(null);
+      toast.success(`Marked ${res.resolved} comments as done.`);
+    } catch (err) {
+      toastError(err, "Couldn't mark the comments as done.");
+    } finally {
+      setResolvingAll(false);
+    }
+  }
+  // Owner-only wipe of this revision's comments (everyone's). Hard
+  // delete with no undo, so it sits behind a danger confirm that says so.
+  async function handleDeleteAll() {
+    if (!id || deletingAll) return;
+    const n = comments.length;
+    const ok = await dialog.confirm({
+      title: `Delete all ${n} comments?`,
+      body:
+        "This permanently deletes every comment and reply on this revision, " +
+        "including other people's. It can't be undone. Comments on other " +
+        "revisions are not affected.",
+      confirmLabel: "Delete all",
+      danger: true,
+    });
+    if (!ok) return;
+    setDeletingAll(true);
+    try {
+      const res = await api.deleteAllComments(id);
+      applyMutation(() => []);
+      setActiveId(null);
+      toast.success(`Deleted ${res.deleted} comments.`);
+    } catch (err) {
+      toastError(err, "Couldn't delete the comments.");
+    } finally {
+      setDeletingAll(false);
+    }
+  }
   async function handleReply(c: Comment, body: string) {
     const author = user?.name || user?.login || getAuthor() || "Anonymous";
     try {
@@ -1126,22 +1403,11 @@ export default function DocumentPage() {
     }
   }
 
-  // A comment counts as "unread" when it's newer than the user's previous
-  // open of this doc. Anchored on previouslyViewedAt from getDocument —
-  // first-ever visit returns no prior, so nothing is unread.
+  // Unread = something new written by someone else since the previous
+  // open of this doc (see utils/unread). First-ever visit returns no
+  // prior view, so nothing is unread.
   const isUnread = useCallback(
-    (c: Comment) => {
-      if (!doc?.previouslyViewedAt) return false;
-      if (sessionReadIds.has(c.id)) return false;
-      const prev = Date.parse(doc.previouslyViewedAt);
-      // Latest activity on a thread = max(comment.updatedAt, last reply).
-      let latest = Date.parse(c.updatedAt);
-      for (const r of c.replies) {
-        const t = Date.parse(r.updatedAt);
-        if (t > latest) latest = t;
-      }
-      return latest > prev;
-    },
+    (c: Comment) => isCommentUnread(c, doc?.previouslyViewedAt, sessionReadIds),
     [doc?.previouslyViewedAt, sessionReadIds]
   );
 
@@ -1236,12 +1502,26 @@ export default function DocumentPage() {
   // its anchored line into the viewport instead. The page scroll IS
   // the editor's scroll now (cm-scroller overflow: visible) so this
   // moves the body just like the view-mode branch.
+  //
+  // Scrolls once per activation (activeId × editing). `comments` stays a
+  // dependency only so an activation whose highlight isn't in the DOM
+  // yet can land once it appears; any other comments change — posting a
+  // new comment, a reply, an SSE refresh — must NOT re-scroll, or the
+  // page jumps back to a previously active comment the reader has since
+  // scrolled away from.
+  const scrolledActivationRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!activeId) return;
+    if (!activeId) {
+      scrolledActivationRef.current = null;
+      return;
+    }
+    const activation = `${activeId}|${editing ? "edit" : "view"}`;
+    if (scrolledActivationRef.current === activation) return;
     if (editing) {
       const c = comments.find((x) => x.id === activeId);
       const exact = c?.anchor?.exact || c?.originalExact || "";
       if (exact && editorRef.current) {
+        scrolledActivationRef.current = activation;
         editorRef.current.scrollAnchorIntoView(exact);
       }
       return;
@@ -1249,6 +1529,7 @@ export default function DocumentPage() {
     if (!contentRef.current) return;
     const rect = getHighlightRect(contentRef.current, activeId);
     if (!rect) return;
+    scrolledActivationRef.current = activation;
     const margin = 100;
     if (rect.top < margin || rect.bottom > window.innerHeight - margin) {
       window.scrollTo({
@@ -1383,6 +1664,18 @@ export default function DocumentPage() {
 
   return (
     <div className="flex min-h-full">
+      {tocItems.length > 0 && (
+        <TocSidebar
+          items={tocItems}
+          activeId={tocActive}
+          open={tocOpen}
+          onToggle={toggleToc}
+          onSelect={selectTocItem}
+          unavailableReason={
+            editing ? "The table of contents is available in reading mode." : undefined
+          }
+        />
+      )}
       {/* Main content — uses the page-level (body) scroll, not its own
           inner scroller. The sticky editor toolbar pins to the viewport
           as the user scrolls through a long document. Width fills the
@@ -1400,9 +1693,16 @@ export default function DocumentPage() {
             onRevise={handleReviseClick}
             onEdit={() => withIdentity(startEditing)}
             editLockedBy={editLock.locked && !editLock.mine ? editLock.holder : undefined}
-            onPushback={() => withIdentity(() => setShowPushback(true))}
+            onPushback={
+              githubRepoAccess
+                ? () => withIdentity(() => setShowPushback(true))
+                : undefined
+            }
+            onUploadVersion={user && !editing ? handleUploadVersion : undefined}
+            uploadingVersion={uploadingVersion}
             onShare={() => setShowShare(true)}
             onDownload={handleDownload}
+            onExportComments={() => setShowExport(true)}
             onDelete={deleteDoc}
           />
 
@@ -1505,6 +1805,9 @@ export default function DocumentPage() {
               content={doc.content}
               baseUrl={baseURLForDoc(doc.sourceUrl)}
               sourceUrl={doc.sourceUrl}
+              docLinkBase={doc.sourceUrl ? undefined : docLinkBase(doc.id)}
+              onRelativeDocLink={openRelativeDocLink}
+              onFragmentNavigate={pushFragment}
             />
           )}
 
@@ -1531,7 +1834,6 @@ export default function DocumentPage() {
                   <OrphanCommentCard
                     key={c.id}
                     comment={c}
-                    me={me}
                     onStartReanchor={() => startReanchor(c)}
                     onMakeDocLevel={() => makeDocLevel(c)}
                     onResolve={() =>
@@ -1561,6 +1863,9 @@ export default function DocumentPage() {
           above) explicitly avoids reading the cards-container's
           viewport rect so internal sidebar scroll never feeds back into
           card positioning. */}
+      {/* Bottom-right of the document column: the comment sidebar is
+          w-96 (24rem), so sit 1.5rem to its left. */}
+      <BackToTop className="bottom-6 right-[25.5rem]" />
       <aside
         ref={sidebarRef}
         className="w-96 shrink-0 border-l border-rule bg-card overflow-y-auto sticky top-0 h-screen self-start"
@@ -1603,6 +1908,33 @@ export default function DocumentPage() {
               </FilterButton>
             </div>
           </div>
+          {/* Batch resolve: appears only when 2+ comments are open —
+              a single one is already one click on its card. */}
+          {openCount >= 2 && (
+            <div className="px-4 pb-2 -mt-1 flex items-center justify-between gap-2 text-xs">
+              <span className="text-muted">{openCount} open comments</span>
+              <button
+                onClick={handleResolveAll}
+                disabled={resolvingAll}
+                className="px-2.5 py-1 rounded border border-rule text-ink hover:bg-soft disabled:opacity-50 font-medium"
+              >
+                {resolvingAll ? "Marking…" : "Mark all done"}
+              </button>
+            </div>
+          )}
+          {/* Owner-only, deliberately low-key: a destructive action
+              shouldn't compete with the everyday controls above. */}
+          {doc.isOwner && comments.length > 0 && (
+            <div className="px-4 pb-2 -mt-1 flex justify-end text-xs">
+              <button
+                onClick={handleDeleteAll}
+                disabled={deletingAll}
+                className="text-faint hover:text-danger disabled:opacity-50"
+              >
+                {deletingAll ? "Deleting…" : "Delete all comments"}
+              </button>
+            </div>
+          )}
           {/* Batch apply: appears only when 2+ open suggestions exist.
               One click, one confirm, one revision — the "accept the
               agent's whole review" gesture. */}
@@ -1695,7 +2027,6 @@ export default function DocumentPage() {
                   key={c.id}
                   comment={c}
                   active={activeId === c.id}
-                  me={me}
                   requireIdentity={withIdentity}
                   onActivate={() => setActiveId(c.id)}
                   onResolve={() =>
@@ -1789,7 +2120,6 @@ export default function DocumentPage() {
                   <CommentCard
                     comment={c}
                     active={activeId === c.id}
-                    me={me}
                     requireIdentity={withIdentity}
                     onActivate={() => setActiveId(c.id)}
                     onResolve={() =>
@@ -1923,6 +2253,9 @@ export default function DocumentPage() {
         />
       )}
 
+      {showExport && (
+        <ExportCommentsModal doc={doc} comments={comments} onClose={() => setShowExport(false)} />
+      )}
       {showShare && (
         <ShareModal doc={doc} onClose={() => setShowShare(false)} />
       )}

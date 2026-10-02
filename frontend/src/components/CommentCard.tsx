@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { Comment, Reply } from "../types";
 import { colorFor, initials } from "../utils/format";
-import { getAuthor } from "../utils/author";
 import { useAuth } from "../auth";
 import { useDialog } from "./Dialogs";
 import RichBody from "./RichBody";
@@ -12,7 +11,6 @@ import TimeAgo from "./TimeAgo";
 interface Props {
   comment: Comment;
   active: boolean;
-  me: string;
   onActivate: () => void;
   onResolve: () => Promise<void>;
   onReopen: () => Promise<void>;
@@ -106,7 +104,6 @@ function agentTitle(name: string, ownerName?: string, ownerLogin?: string): stri
 export default function CommentCard({
   comment,
   active,
-  me,
   onActivate,
   onResolve,
   onReopen,
@@ -140,12 +137,12 @@ export default function CommentCard({
   }, [comment.body, editing]);
 
   // Backend stamps `mine` whenever the viewer is the human behind the
-  // comment — either the direct human author or the owner of the bot/token
-  // that wrote it. Falls back to a name match for anonymous (no-session)
-  // viewers, since `mine` is only computed when there's an identified user.
-  const isMine = user
-    ? Boolean(comment.mine)
-    : comment.author === getAuthor();
+  // comment — the direct human author, the owner of the bot/token that
+  // wrote it, or (only when MARKUPMARKDOWN_ANONYMOUS_NAME_EDITS is on) an
+  // anonymous visitor whose display name matches an anonymous comment.
+  // The server is the only judge: a client-side name match used to show
+  // Edit/Delete buttons the server then refused.
+  const isMine = Boolean(comment.mine);
 
   async function handleReply() {
     if (!replyBody.trim()) return;
@@ -291,7 +288,7 @@ export default function CommentCard({
             <ReplyRow
               key={r.id}
               reply={r}
-              mine={user ? Boolean(r.mine) : r.author === me}
+              mine={Boolean(r.mine)}
               onEdit={(body) => onEditReply(r.id, body)}
               onDelete={() => onDeleteReply(r.id)}
             />

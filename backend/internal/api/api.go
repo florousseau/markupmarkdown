@@ -64,6 +64,7 @@ func (a *API) Register(r *mux.Router) {
 	// `/api/documents/{id}` patterns or gorilla/mux interprets
 	// "by-source" as an id and routes to getDocument.
 	r.HandleFunc("/api/documents/by-source", a.resolveBySource).Methods("GET")
+	r.HandleFunc("/api/documents/{id}/resolve-link", a.resolveUploadLink).Methods("GET")
 	r.HandleFunc("/api/me/trash", a.listTrash).Methods("GET")
 	r.HandleFunc("/api/documents/{id}", a.getDocument).Methods("GET")
 	r.HandleFunc("/api/documents/{id}", a.patchDocument).Methods("PATCH")
@@ -88,6 +89,7 @@ func (a *API) Register(r *mux.Router) {
 
 	r.HandleFunc("/api/documents/{id}/comments", a.listComments).Methods("GET")
 	r.HandleFunc("/api/documents/{id}/comments", a.createComment).Methods("POST")
+	r.HandleFunc("/api/documents/{id}/comments", a.deleteAllComments).Methods("DELETE")
 	r.HandleFunc("/api/documents/{id}/events", a.streamEvents).Methods("GET")
 
 	r.HandleFunc("/api/comments/{id}", a.patchComment).Methods("PATCH")
@@ -172,6 +174,7 @@ func (a *API) Register(r *mux.Router) {
 	// suggested replacement, and resolves the comment.
 	r.HandleFunc("/api/comments/{id}/apply-suggestion", a.applySuggestion).Methods("POST")
 	r.HandleFunc("/api/documents/{id}/apply-suggestions", a.applyAllSuggestions).Methods("POST")
+	r.HandleFunc("/api/documents/{id}/resolve-all", a.resolveAllComments).Methods("POST")
 
 	r.HandleFunc("/api/me/notifications", a.listNotifications).Methods("GET")
 	r.HandleFunc("/api/me/notifications/read", a.markAllNotificationsRead).Methods("POST")

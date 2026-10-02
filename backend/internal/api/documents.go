@@ -24,6 +24,9 @@ type createDocumentRequest struct {
 	URL     string `json:"url,omitempty"`
 	Title   string `json:"title,omitempty"`
 	Content string `json:"content,omitempty"`
+	// Filename is the uploaded file's original name (content uploads
+	// only). Stored so cross-doc links can resolve — see resolveUploadLink.
+	Filename string `json:"filename,omitempty"`
 }
 
 type patchDocumentRequest struct {
@@ -472,6 +475,7 @@ func (a *API) createDocument(w http.ResponseWriter, r *http.Request) {
 		doc.Content = req.Content
 		doc.Origin = "upload"
 		doc.SourceKind = models.SourceKindUpload
+		doc.UploadFilename = uploadFilename(req.Filename)
 		doc.Title = req.Title
 		if doc.Title == "" {
 			doc.Title = "Untitled"
@@ -523,6 +527,10 @@ type documentResponse struct {
 	// an agent (via a Bearer token) and hasn't been human-accepted
 	// yet. Pushback refuses to ship these until accepted (P0-3).
 	AgentProposed bool `json:"agentProposed,omitempty"`
+	// IsOwner is true when the viewer created this revision chain (its
+	// root). Gates owner-only actions in the UI, such as deleting every
+	// comment on a revision; the handlers re-check.
+	IsOwner bool `json:"isOwner,omitempty"`
 }
 
 type parentSummary struct {
@@ -605,6 +613,7 @@ func (a *API) getDocument(w http.ResponseWriter, r *http.Request) {
 	// Read prior view BEFORE bumping it, so the response reflects the
 	// state the user is about to see (unread = new since last visit).
 	if u := a.currentUser(r); u != nil {
+		resp.IsOwner = a.isDocOwner(r.Context(), doc, u.ID)
 		if prior, _ := a.store.GetDocumentView(r.Context(), doc.ID, u.ID); prior != nil {
 			resp.PreviouslyViewedAt = prior.LastViewedAt.UTC().Format(time.RFC3339Nano)
 		}

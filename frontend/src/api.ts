@@ -1,3 +1,4 @@
+import { getAuthor } from "./utils/author";
 import type {
   Anchor,
   AnthropicKeyStatus,
@@ -57,12 +58,22 @@ export class APIError extends Error {
   }
 }
 
+// The visitor's display name, sent so the server can recognise an
+// anonymous visitor's own comments when MARKUPMARKDOWN_ANONYMOUS_NAME_EDITS
+// is on (backend/internal/api/anonymous.go). Ignored for signed-in
+// requests. URL-encoded: header values must be Latin-1.
+function authorNameHeader(): Record<string, string> {
+  const name = getAuthor();
+  return name ? { "X-Author-Name": encodeURIComponent(name) } : {};
+}
+
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, {
     ...init,
     credentials: "include",
     headers: {
       "Content-Type": "application/json",
+      ...authorNameHeader(),
       ...(init?.headers ?? {}),
     },
   });
@@ -100,11 +111,17 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ url, title }),
     }),
-  createFromContent: (content: string, title: string) =>
+  createFromContent: (content: string, title: string, filename?: string) =>
     req<MdDocument>("/api/documents", {
       method: "POST",
-      body: JSON.stringify({ content, title }),
+      body: JSON.stringify({ content, title, filename }),
     }),
+  /** Resolves a relative `.md` link inside an uploaded doc to the
+   * latest revision of the same creator's upload with that file name. */
+  resolveDocLink: (docId: string, href: string) =>
+    req<{ id: string; title: string }>(
+      `/api/documents/${docId}/resolve-link?href=${encodeURIComponent(href)}`,
+    ),
   renameDocument: (id: string, title: string) =>
     req<MdDocument>(`/api/documents/${id}`, {
       method: "PATCH",
@@ -339,6 +356,18 @@ export const api = {
     req<Comment>(`/api/comments/${id}/resolve`, {
       method: "POST",
       body: JSON.stringify({ author }),
+    }),
+  /** Marks every open comment on this revision as done. */
+  resolveAllComments: (documentId: string, author: string) =>
+    req<{ resolved: number }>(`/api/documents/${documentId}/resolve-all`, {
+      method: "POST",
+      body: JSON.stringify({ author }),
+    }),
+  /** Owner only, browser session only: permanently deletes every
+   * comment and reply on this revision. */
+  deleteAllComments: (documentId: string) =>
+    req<{ deleted: number }>(`/api/documents/${documentId}/comments`, {
+      method: "DELETE",
     }),
   reopenComment: (id: string) =>
     req<Comment>(`/api/comments/${id}/reopen`, { method: "POST" }),

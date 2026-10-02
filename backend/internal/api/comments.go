@@ -73,11 +73,14 @@ func (a *API) requireMineComment(w http.ResponseWriter, r *http.Request, c *mode
 		return false
 	}
 	vid := a.viewerID(r)
-	if vid == "" || vid != c.AuthorID {
-		writeError(w, http.StatusForbidden, "you can only edit or delete comments you (or a bot you own) created")
-		return false
+	if vid != "" && vid == c.AuthorID {
+		return true
 	}
-	return true
+	if vid == "" && claimsAnonymous(a.anonymousClaim(r), c.Author, c.AuthorID, c.ActorKind) {
+		return true
+	}
+	writeError(w, http.StatusForbidden, "you can only edit or delete comments you (or a bot you own) created")
+	return false
 }
 
 // requireMineReply mirrors requireMineComment for a reply nested in a parent
@@ -88,13 +91,19 @@ func (a *API) requireMineReply(w http.ResponseWriter, r *http.Request, parent *m
 		return false
 	}
 	vid := a.viewerID(r)
+	claim := ""
 	if vid == "" {
-		writeError(w, http.StatusForbidden, "you can only edit or delete replies you (or a bot you own) created")
-		return false
+		claim = a.anonymousClaim(r)
+		if claim == "" {
+			writeError(w, http.StatusForbidden, "you can only edit or delete replies you (or a bot you own) created")
+			return false
+		}
 	}
 	for i := range parent.Replies {
-		if parent.Replies[i].ID == replyID {
-			if parent.Replies[i].AuthorID != vid {
+		if rp := parent.Replies[i]; rp.ID == replyID {
+			mine := (vid != "" && rp.AuthorID == vid) ||
+				(vid == "" && claimsAnonymous(claim, rp.Author, rp.AuthorID, rp.ActorKind))
+			if !mine {
 				writeError(w, http.StatusForbidden, "you can only edit or delete replies you (or a bot you own) created")
 				return false
 			}
@@ -109,17 +118,29 @@ func (a *API) requireMineReply(w http.ResponseWriter, r *http.Request, parent *m
 // "mine" when the viewer is the human behind it — author for human-written
 // content, token owner for agent content. AuthorID on agent comments points
 // at the token's owning user (stamped in mcpapi.go's CreateComment), so the
-// same equality check covers both cases.
-func markMine(comments []models.Comment, viewerID string) {
-	if viewerID == "" {
+// same equality check covers both cases. With no viewerID, an anonymous
+// name claim (see anonymous.go) marks the anonymous content it covers.
+func markMine(comments []models.Comment, viewerID, claim string) {
+	if viewerID == "" && claim == "" {
 		return
 	}
 	for i := range comments {
-		c := &comments[i]
+		markCommentMine(&comments[i], viewerID, claim)
+	}
+}
+
+func markCommentMine(c *models.Comment, viewerID, claim string) {
+	if viewerID != "" {
 		c.Mine = c.AuthorID == viewerID
-		for j := range c.Replies {
-			r := &c.Replies[j]
+	} else {
+		c.Mine = claimsAnonymous(claim, c.Author, c.AuthorID, c.ActorKind)
+	}
+	for j := range c.Replies {
+		r := &c.Replies[j]
+		if viewerID != "" {
 			r.Mine = r.AuthorID == viewerID
+		} else {
+			r.Mine = claimsAnonymous(claim, r.Author, r.AuthorID, r.ActorKind)
 		}
 	}
 }
@@ -202,13 +223,14 @@ func (a *API) decorate(r *http.Request, c *models.Comment) {
 		return
 	}
 	vid := a.viewerID(r)
+	claim := ""
 	if vid == "" {
+		claim = a.anonymousClaim(r)
+	}
+	if vid == "" && claim == "" {
 		return
 	}
-	c.Mine = c.AuthorID == vid
-	for i := range c.Replies {
-		c.Replies[i].Mine = c.Replies[i].AuthorID == vid
-	}
+	markCommentMine(c, vid, claim)
 }
 
 // resolveAgentIdentity overlays one comment in place. Single round trip:
@@ -277,7 +299,12 @@ func (a *API) listComments(w http.ResponseWriter, r *http.Request) {
 		comments = []models.Comment{}
 	}
 	a.resolveAgentIdentities(r.Context(), comments)
-	markMine(comments, a.viewerID(r))
+	vid := a.viewerID(r)
+	claim := ""
+	if vid == "" {
+		claim = a.anonymousClaim(r)
+	}
+	markMine(comments, vid, claim)
 	// Opt-in HTML rendering of bodies for agents / integrators that want
 	// pre-rendered output. Default is markdown source (machine-readable).
 	if r.URL.Query().Get("render") == "html" {
@@ -431,6 +458,59 @@ func (a *API) deleteComment(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// isDocOwner reports whether userID created doc's revision chain. The
+// chain root's CreatedByID is the owner: revisions can be written by
+// anyone, anonymous uploads have no owner at all.
+func (a *API) isDocOwner(ctx context.Context, doc *models.Document, userID string) bool {
+	if doc == nil || userID == "" {
+		return false
+	}
+	root := doc
+	if doc.ParentID != "" {
+		if rd, err := a.store.RootDocument(ctx, doc.ID); err == nil && rd != nil {
+			root = rd
+		}
+	}
+	return root.CreatedByID != "" && root.CreatedByID == userID
+}
+
+// deleteAllComments is DELETE /api/documents/:id/comments — the doc
+// owner wipes every comment and reply on this revision, everyone's
+// included. The one deliberate exception to author-only delete (rule
+// #13): the owner of the document decides what its review thread holds.
+// Irreversible (hard delete, like deleting one comment), so it is
+// cookie-session only — a leaked token, even admin-scoped, must never be
+// able to erase a document's whole discussion.
+func (a *API) deleteAllComments(w http.ResponseWriter, r *http.Request) {
+	doc, accErr := a.checkDocAccess(r, mux.Vars(r)["id"])
+	if accErr != nil {
+		a.writeAccessError(w, r, accErr)
+		return
+	}
+	if hasBearer(r) {
+		writeError(w, http.StatusForbidden, "deleting all comments requires a browser session, not an API token")
+		return
+	}
+	user := a.currentUser(r)
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, "sign in required")
+		return
+	}
+	if !a.isDocOwner(r.Context(), doc, user.ID) {
+		writeError(w, http.StatusForbidden, "only the document's owner can delete all of its comments")
+		return
+	}
+	n, err := a.store.DeleteCommentsForDocument(r.Context(), doc.ID)
+	if err != nil {
+		internalError(w, "store.delete_comments_for_document", err)
+		return
+	}
+	if n > 0 {
+		a.hub.Broadcast(doc.ID, "comments-updated")
+	}
+	writeJSON(w, http.StatusOK, map[string]int64{"deleted": n})
+}
+
 func (a *API) resolveComment(w http.ResponseWriter, r *http.Request) {
 	id := mux.Vars(r)["id"]
 	if _, _, accErr := a.checkCommentAccess(r, id); accErr != nil {
@@ -458,6 +538,31 @@ func (a *API) resolveComment(w http.ResponseWriter, r *http.Request) {
 	}
 	a.hub.Broadcast(c.DocumentID, "comments-updated")
 	a.decorate(r, c); writeJSON(w, http.StatusOK, c)
+}
+
+// resolveAllComments is POST /api/documents/:id/resolve-all — marks
+// every open comment on this revision done in one go. Same guards as
+// resolving one comment (doc access, write scope); one broadcast.
+func (a *API) resolveAllComments(w http.ResponseWriter, r *http.Request) {
+	doc, accErr := a.checkDocAccess(r, mux.Vars(r)["id"])
+	if accErr != nil {
+		a.writeAccessError(w, r, accErr)
+		return
+	}
+	if !a.enforceScope(w, r, models.TokenScopeWrite) {
+		return
+	}
+	var req resolveRequest
+	_ = readJSON(r, &req)
+	n, err := a.store.ResolveOpenComments(r.Context(), doc.ID, a.resolveAuthor(r, req.Author), time.Now().UTC())
+	if err != nil {
+		internalError(w, "store.resolve_open_comments", err)
+		return
+	}
+	if n > 0 {
+		a.hub.Broadcast(doc.ID, "comments-updated")
+	}
+	writeJSON(w, http.StatusOK, map[string]int64{"resolved": n})
 }
 
 func (a *API) reopenComment(w http.ResponseWriter, r *http.Request) {

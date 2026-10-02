@@ -1,4 +1,4 @@
-import { forwardRef, memo, useCallback } from "react";
+import { forwardRef, memo, useCallback, useEffect, useRef } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import type { Element, ElementContent } from "hast";
 import remarkGfm from "remark-gfm";
@@ -6,6 +6,17 @@ import rehypeRaw from "rehype-raw";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import rehypeSlug from "rehype-slug";
 import { makeUrlTransform } from "../utils/baseUrl";
+import {
+  docLinkHref,
+  parseDocLinkHref,
+  parseRelativeDocLink,
+  type RelativeDocLink,
+} from "../utils/docLinks";
+import {
+  decodeFragment,
+  findAnchorTarget,
+  setUrlFragment,
+} from "../utils/headingAnchor";
 import MermaidBlock from "./MermaidBlock";
 
 interface Props {
@@ -22,13 +33,28 @@ interface Props {
    * revision is streaming in — a half-written diagram would re-render
    * and fail on every token. */
   renderDiagrams?: boolean;
+  /** Set only for docs with no source URL (uploads), where the browser
+   * has nothing to resolve `[x](AUTRE.md#s)` against. Such hrefs are
+   * rewritten to `${docLinkBase}AUTRE.md#s` (see utils/docLinks) — a
+   * real URL, so new-tab clicks and "copy link" work natively. */
+  docLinkBase?: string;
+  /** Plain left-clicks on those rewritten links call this instead of
+   * loading the intermediate /link/ page. */
+  onRelativeDocLink?: (link: RelativeDocLink) => void;
+  /** Records an in-document jump to heading `id` (decoded, no `#`) in
+   * the URL. The page passes one that pushes a history entry, so the
+   * browser's Back/Forward (mouse buttons included) walk the sections
+   * the reader clicked. Defaults to replacing the fragment in place. */
+  onFragmentNavigate?: (id: string) => void;
 }
 
 // Extend the default sanitize schema to allow common HTML tags people put in
 // READMEs: <img>, <picture>, <details>/<summary>, plus the width/height/align
 // attributes those tags typically use. `id` on headings is allow-listed so
-// rehype-slug's generated ids survive sanitization — that's what makes
-// in-document anchor links ([Section](#section)) jump to the right place.
+// rehype-slug's generated ids survive sanitization. Sanitize still prefixes
+// them with `user-content-` (anti-clobbering, same as GitHub), so links are
+// resolved through findAnchorTarget in utils/headingAnchor.ts, never by a
+// bare getElementById.
 const schema = {
   ...defaultSchema,
   tagNames: [
@@ -99,8 +125,12 @@ const diagramComponents: Components = {
 };
 
 const MarkdownRender = memo(
-  forwardRef<HTMLDivElement, Props>(({ content, baseUrl, sourceUrl, renderDiagrams = true }, ref) => {
-    const urlTransform = makeUrlTransform(baseUrl);
+  forwardRef<HTMLDivElement, Props>(({ content, baseUrl, sourceUrl, renderDiagrams = true, docLinkBase, onRelativeDocLink, onFragmentNavigate = setUrlFragment }, ref) => {
+    const baseTransform = makeUrlTransform(baseUrl);
+    const urlTransform = (url: string) => {
+      const link = docLinkBase ? parseRelativeDocLink(url) : null;
+      return link && docLinkBase ? docLinkHref(docLinkBase, link) : baseTransform(url);
+    };
     // Intercept clicks on in-document anchor links so they scroll
     // within the page instead of triggering a full reload. Three URL
     // shapes count as "same document":
@@ -114,7 +144,7 @@ const MarkdownRender = memo(
     // scroll to the target — but with a sticky header in the layout,
     // the heading lands hidden behind it. We smooth-scroll into view
     // and let CSS `scroll-margin-top` (set on mm-prose headings in
-    // index.css) keep the heading clear of the toolbar. Off-document
+    // styles.css) keep the heading clear of the toolbar. Off-document
     // links fall through to default.
     const onClick = useCallback(
       (e: React.MouseEvent<HTMLDivElement>) => {
@@ -123,9 +153,21 @@ const MarkdownRender = memo(
         const href = anchor.getAttribute("href") ?? "";
         if (!href) return;
 
-        let id = "";
-        if (href.startsWith("#") && href.length > 1) {
-          id = decodeURIComponent(href.slice(1));
+        let fragment = "";
+        // Modified clicks (new tab / window) fall through to the real href.
+        const plainClick =
+          e.button === 0 && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey;
+        const docLink =
+          docLinkBase && onRelativeDocLink && plainClick
+            ? parseDocLinkHref(docLinkBase, href)
+            : null;
+        if (docLink && onRelativeDocLink) {
+          e.preventDefault();
+          onRelativeDocLink(docLink);
+          return;
+        }
+        if (href.startsWith("#")) {
+          fragment = href;
         } else {
           // Try to interpret the href as a fully-qualified URL and
           // detect whether it points at the same doc we're rendering.
@@ -139,28 +181,54 @@ const MarkdownRender = memo(
           }
           if (!linkURL.hash || linkURL.hash.length < 2) return;
           if (!isSameDoc(linkURL, sourceUrl)) return;
-          id = decodeURIComponent(linkURL.hash.slice(1));
+          fragment = linkURL.hash;
         }
 
-        const root = e.currentTarget;
-        // CSS.escape isn't perfect for ids that begin with a digit, but
-        // getElementById sidesteps that entirely and is scoped to the
-        // document — fine because rehype-slug makes ids unique per
-        // heading and our docs only have one MarkdownRender at a time.
-        const target = document.getElementById(id);
-        if (!target || !root.contains(target)) return;
+        // A bare `#` or a fragment with no matching target falls through
+        // to the browser default, same as GitHub.
+        const target = findAnchorTarget(e.currentTarget, fragment);
+        if (!target) return;
         e.preventDefault();
         target.scrollIntoView({ behavior: "smooth", block: "start" });
-        // Update the URL hash so the back button works without re-navigating
-        // through React Router.
-        if (window.history && window.history.replaceState) {
-          window.history.replaceState(null, "", `#${id}`);
-        }
+        onFragmentNavigate(decodeFragment(fragment));
       },
-      [sourceUrl],
+      [sourceUrl, docLinkBase, onRelativeDocLink, onFragmentNavigate],
     );
+
+    // Shareable section links: honour `#section` in the URL once the doc
+    // has rendered (the browser's own attempt ran before the content
+    // arrived, and couldn't know about the user-content- prefix anyway),
+    // and again whenever the hash changes by hand. Only the first render
+    // with content scrolls — a live revision swap (SSE) must not yank the
+    // reader back to the section they opened.
+    const rootRef = useRef<HTMLDivElement | null>(null);
+    const setRefs = useCallback(
+      (el: HTMLDivElement | null) => {
+        rootRef.current = el;
+        if (typeof ref === "function") ref(el);
+        else if (ref) ref.current = el;
+      },
+      [ref],
+    );
+    const initialHashDone = useRef(false);
+    useEffect(() => {
+      const scrollToHash = (behavior: ScrollBehavior) => {
+        const root = rootRef.current;
+        const hash = window.location.hash;
+        if (!root || hash.length < 2) return;
+        findAnchorTarget(root, hash)?.scrollIntoView({ behavior, block: "start" });
+      };
+      if (!initialHashDone.current && content) {
+        initialHashDone.current = true;
+        scrollToHash("auto");
+      }
+      const onHashChange = () => scrollToHash("smooth");
+      window.addEventListener("hashchange", onHashChange);
+      return () => window.removeEventListener("hashchange", onHashChange);
+    }, [content]);
+
     return (
-      <div ref={ref} className="mm-prose" onClick={onClick}>
+      <div ref={setRefs} className="mm-prose" onClick={onClick}>
         <ReactMarkdown
           remarkPlugins={[remarkGfm]}
           rehypePlugins={[rehypeSlug, rehypeRaw, [rehypeSanitize, schema]]}

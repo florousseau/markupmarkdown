@@ -293,6 +293,12 @@ export interface MdDocument {
   /** Discriminates which set of source-specific fields are populated.
    * Newer than `origin`; switch on this in new code. */
   sourceKind?: "github_blob" | "gist" | "url" | "upload";
+  /** True when the viewer created this revision chain — gates
+   * owner-only actions (deleting every comment). Server re-checks. */
+  isOwner?: boolean;
+  /** Original file name of an upload ("SPEC.md"); lets relative
+   * `[x](SPEC.md)` links in the creator's other uploads resolve here. */
+  uploadFilename?: string;
   content: string;
   private?: boolean;
   githubOwner?: string;
@@ -512,6 +518,9 @@ export interface AuthUser {
 export interface AuthConfig {
   githubEnabled: boolean;
   githubClientId?: string;
+  /** False when the deploy's OAuth scope is identity-only (no repo /
+   * public_repo) — the SPA hides Push-to-GitHub. */
+  githubRepoAccess?: boolean;
 }
 
 export interface Reply {
