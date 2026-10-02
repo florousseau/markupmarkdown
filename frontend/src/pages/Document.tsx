@@ -1834,7 +1834,6 @@ export default function DocumentPage() {
                   <OrphanCommentCard
                     key={c.id}
                     comment={c}
-                    me={me}
                     onStartReanchor={() => startReanchor(c)}
                     onMakeDocLevel={() => makeDocLevel(c)}
                     onResolve={() =>
@@ -2028,7 +2027,6 @@ export default function DocumentPage() {
                   key={c.id}
                   comment={c}
                   active={activeId === c.id}
-                  me={me}
                   requireIdentity={withIdentity}
                   onActivate={() => setActiveId(c.id)}
                   onResolve={() =>
@@ -2122,7 +2120,6 @@ export default function DocumentPage() {
                   <CommentCard
                     comment={c}
                     active={activeId === c.id}
-                    me={me}
                     requireIdentity={withIdentity}
                     onActivate={() => setActiveId(c.id)}
                     onResolve={() =>

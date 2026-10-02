@@ -1,3 +1,4 @@
+import { getAuthor } from "./utils/author";
 import type {
   Anchor,
   AnthropicKeyStatus,
@@ -57,12 +58,22 @@ export class APIError extends Error {
   }
 }
 
+// The visitor's display name, sent so the server can recognise an
+// anonymous visitor's own comments when MARKUPMARKDOWN_ANONYMOUS_NAME_EDITS
+// is on (backend/internal/api/anonymous.go). Ignored for signed-in
+// requests. URL-encoded: header values must be Latin-1.
+function authorNameHeader(): Record<string, string> {
+  const name = getAuthor();
+  return name ? { "X-Author-Name": encodeURIComponent(name) } : {};
+}
+
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, {
     ...init,
     credentials: "include",
     headers: {
       "Content-Type": "application/json",
+      ...authorNameHeader(),
       ...(init?.headers ?? {}),
     },
   });
