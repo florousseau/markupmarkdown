@@ -73,11 +73,14 @@ func (a *API) requireMineComment(w http.ResponseWriter, r *http.Request, c *mode
 		return false
 	}
 	vid := a.viewerID(r)
-	if vid == "" || vid != c.AuthorID {
-		writeError(w, http.StatusForbidden, "you can only edit or delete comments you (or a bot you own) created")
-		return false
+	if vid != "" && vid == c.AuthorID {
+		return true
 	}
-	return true
+	if vid == "" && claimsAnonymous(a.anonymousClaim(r), c.Author, c.AuthorID, c.ActorKind) {
+		return true
+	}
+	writeError(w, http.StatusForbidden, "you can only edit or delete comments you (or a bot you own) created")
+	return false
 }
 
 // requireMineReply mirrors requireMineComment for a reply nested in a parent
@@ -88,13 +91,19 @@ func (a *API) requireMineReply(w http.ResponseWriter, r *http.Request, parent *m
 		return false
 	}
 	vid := a.viewerID(r)
+	claim := ""
 	if vid == "" {
-		writeError(w, http.StatusForbidden, "you can only edit or delete replies you (or a bot you own) created")
-		return false
+		claim = a.anonymousClaim(r)
+		if claim == "" {
+			writeError(w, http.StatusForbidden, "you can only edit or delete replies you (or a bot you own) created")
+			return false
+		}
 	}
 	for i := range parent.Replies {
-		if parent.Replies[i].ID == replyID {
-			if parent.Replies[i].AuthorID != vid {
+		if rp := parent.Replies[i]; rp.ID == replyID {
+			mine := (vid != "" && rp.AuthorID == vid) ||
+				(vid == "" && claimsAnonymous(claim, rp.Author, rp.AuthorID, rp.ActorKind))
+			if !mine {
 				writeError(w, http.StatusForbidden, "you can only edit or delete replies you (or a bot you own) created")
 				return false
 			}
@@ -109,17 +118,29 @@ func (a *API) requireMineReply(w http.ResponseWriter, r *http.Request, parent *m
 // "mine" when the viewer is the human behind it — author for human-written
 // content, token owner for agent content. AuthorID on agent comments points
 // at the token's owning user (stamped in mcpapi.go's CreateComment), so the
-// same equality check covers both cases.
-func markMine(comments []models.Comment, viewerID string) {
-	if viewerID == "" {
+// same equality check covers both cases. With no viewerID, an anonymous
+// name claim (see anonymous.go) marks the anonymous content it covers.
+func markMine(comments []models.Comment, viewerID, claim string) {
+	if viewerID == "" && claim == "" {
 		return
 	}
 	for i := range comments {
-		c := &comments[i]
+		markCommentMine(&comments[i], viewerID, claim)
+	}
+}
+
+func markCommentMine(c *models.Comment, viewerID, claim string) {
+	if viewerID != "" {
 		c.Mine = c.AuthorID == viewerID
-		for j := range c.Replies {
-			r := &c.Replies[j]
+	} else {
+		c.Mine = claimsAnonymous(claim, c.Author, c.AuthorID, c.ActorKind)
+	}
+	for j := range c.Replies {
+		r := &c.Replies[j]
+		if viewerID != "" {
 			r.Mine = r.AuthorID == viewerID
+		} else {
+			r.Mine = claimsAnonymous(claim, r.Author, r.AuthorID, r.ActorKind)
 		}
 	}
 }
@@ -202,13 +223,14 @@ func (a *API) decorate(r *http.Request, c *models.Comment) {
 		return
 	}
 	vid := a.viewerID(r)
+	claim := ""
 	if vid == "" {
+		claim = a.anonymousClaim(r)
+	}
+	if vid == "" && claim == "" {
 		return
 	}
-	c.Mine = c.AuthorID == vid
-	for i := range c.Replies {
-		c.Replies[i].Mine = c.Replies[i].AuthorID == vid
-	}
+	markCommentMine(c, vid, claim)
 }
 
 // resolveAgentIdentity overlays one comment in place. Single round trip:
@@ -277,7 +299,12 @@ func (a *API) listComments(w http.ResponseWriter, r *http.Request) {
 		comments = []models.Comment{}
 	}
 	a.resolveAgentIdentities(r.Context(), comments)
-	markMine(comments, a.viewerID(r))
+	vid := a.viewerID(r)
+	claim := ""
+	if vid == "" {
+		claim = a.anonymousClaim(r)
+	}
+	markMine(comments, vid, claim)
 	// Opt-in HTML rendering of bodies for agents / integrators that want
 	// pre-rendered output. Default is markdown source (machine-readable).
 	if r.URL.Query().Get("render") == "html" {

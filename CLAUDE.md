@@ -216,6 +216,8 @@ Beyond doc-access + scope, [comments.go](backend/internal/api/comments.go) `patc
 
 **One deliberate exception:** the document's owner (the chain root's `CreatedByID`, see `isDocOwner`) can wipe every comment on a revision via `DELETE /api/documents/:id/comments` (`deleteAllComments`). It is **cookie-session only** — Bearer tokens get 403 at any scope — because it's an irreversible hard delete of other people's content. The UI gates it on `doc.isOwner`. Don't widen it to tokens, and don't add per-comment owner overrides on top of it.
 
+**Opt-in anonymous exception:** with `MARKUPMARKDOWN_ANONYMOUS_NAME_EDITS=true`, a request with neither session nor token may edit/delete/re-anchor content whose `AuthorID` is empty, `ActorKind` isn't `agent`, and `Author` equals the name in the `X-Author-Name` header (URL-encoded; never the shared `"Anonymous"` label) — see [anonymous.go](backend/internal/api/anonymous.go). It's a claim, not a proof, hence off by default. `mine` is computed server-side for these viewers too; the frontend must not re-derive it from names.
+
 ### 14. Credential-setting endpoints are cookie-only
 
 `POST/PATCH/DELETE /api/me/tokens*`, `PUT/DELETE /api/me/anthropic-key`, and any other endpoint that stores or rotates a user credential must reject Bearer-token auth with 403. Pattern: `if hasBearer(r) { 403 }` (see rule #2 for why not `tokenInfoFromRequest`). A leaked token must not be able to swap the user's Anthropic key, mint new tokens, or change scopes on existing ones.

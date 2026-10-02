@@ -98,7 +98,9 @@ func main() {
 	corsHandler := cors.New(cors.Options{
 		AllowedOrigins:   []string{cfg.Frontend.URL},
 		AllowedMethods:   []string{"GET", "POST", "PATCH", "DELETE", "OPTIONS"},
-		AllowedHeaders:   []string{"Content-Type", "Authorization"},
+		// X-Author-Name: an anonymous visitor's display name, used only
+		// when MARKUPMARKDOWN_ANONYMOUS_NAME_EDITS is on (api/anonymous.go).
+		AllowedHeaders:   []string{"Content-Type", "Authorization", "X-Author-Name"},
 		AllowCredentials: true,
 	}).Handler(r)
 
