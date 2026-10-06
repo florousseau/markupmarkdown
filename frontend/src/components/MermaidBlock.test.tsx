@@ -1,6 +1,7 @@
-import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, act, within } from "@testing-library/react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import MarkdownRender from "./MarkdownRender";
+import { standaloneSvg } from "../utils/mermaid";
 import {
   applyHighlights,
   getHighlightRect,
@@ -196,5 +197,85 @@ describe("comments on a Mermaid block", () => {
     sel.removeAllRanges();
     sel.addRange(range);
     expect(getSelectionAnchor(el)).toMatchObject({ exact: "Before" });
+  });
+});
+
+describe("zoom, full screen and download", () => {
+  it("keeps every viewer control out of the prose textContent", async () => {
+    const plain = renderDoc({ renderDiagrams: false });
+    const expected = prose(plain.container).textContent;
+    plain.unmount();
+
+    const { container } = renderDoc();
+    await renderedDiagram(container);
+    fireEvent.click(screen.getByRole("button", { name: "Download" }));
+    expect(screen.getByRole("menuitem", { name: "PNG image" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Full screen" }));
+    const dialog = screen.getByRole("dialog", { name: "Mermaid diagram" });
+    expect(container.contains(dialog)).toBe(false);
+    expect(prose(container).textContent).toBe(expected);
+  });
+
+  it("opens the diagram full screen and closes on Escape", async () => {
+    const { container } = renderDoc();
+    await renderedDiagram(container);
+    fireEvent.click(screen.getByRole("button", { name: "Full screen" }));
+    const dialog = screen.getByRole("dialog", { name: "Mermaid diagram" });
+    const host = dialog.querySelector("[data-mm-mermaid-fullscreen]")!;
+    expect(host.shadowRoot?.querySelector("svg")).toBeTruthy();
+    expect(document.body.style.overflow).toBe("hidden");
+
+    // Esc with the menu open closes only the menu.
+    fireEvent.click(within(dialog).getByRole("button", { name: "Download" }));
+    expect(screen.getByRole("menu")).toBeTruthy();
+    fireEvent.keyDown(document.activeElement!, { key: "Escape" });
+    expect(screen.queryByRole("menu")).toBeNull();
+    expect(screen.getByRole("dialog")).toBeTruthy();
+
+    fireEvent.keyDown(document.activeElement!, { key: "Escape" });
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(document.body.style.overflow).toBe("");
+  });
+
+  it("zooms the inline diagram from its viewBox and resets", async () => {
+    mermaidMock.render.mockResolvedValue({
+      svg: '<svg viewBox="0 0 200 100" style="max-width: 200px"><text>A</text></svg>',
+    });
+    const { container } = renderDoc();
+    await renderedDiagram(container);
+    const svg = container
+      .querySelector("[data-mm-mermaid-host]")!
+      .shadowRoot!.querySelector("svg")!;
+    expect(screen.queryByRole("button", { name: "Reset zoom" })).toBeNull();
+    // jsdom has no layout: the unzoomed width reads as 0, so zooming
+    // starts from the natural size (1×).
+    fireEvent.click(screen.getByRole("button", { name: "Zoom in" }));
+    expect(svg.style.width).toBe("250px");
+    expect(svg.style.height).toBe("125px");
+    fireEvent.click(screen.getByRole("button", { name: "Reset zoom" }));
+    expect(svg.style.width).toBe("");
+    expect(svg.style.maxWidth).toBe("200px");
+    expect(screen.queryByRole("button", { name: "Reset zoom" })).toBeNull();
+  });
+
+  it("hides the viewer controls in source view", async () => {
+    const { container } = renderDoc();
+    await renderedDiagram(container);
+    fireEvent.click(screen.getByRole("button", { name: "Show source" }));
+    expect(screen.queryByRole("button", { name: "Full screen" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Zoom in" })).toBeNull();
+  });
+});
+
+describe("standaloneSvg", () => {
+  it("pins the export to the viewBox size", () => {
+    const out = standaloneSvg(
+      '<svg xmlns="http://www.w3.org/2000/svg" width="100%" style="max-width: 320.5px" viewBox="0 0 320.5 90"><g/></svg>',
+    );
+    expect(out.width).toBe(321);
+    expect(out.height).toBe(90);
+    expect(out.markup).toContain('width="321"');
+    expect(out.markup).toContain('height="90"');
+    expect(out.markup).not.toContain("max-width");
   });
 });
