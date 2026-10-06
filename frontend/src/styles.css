@@ -211,6 +211,12 @@ body {
   color: var(--color-accent);
   background: var(--color-accent-soft);
 }
+.mm-prose .mm-mermaid-sep {
+  align-self: stretch;
+  width: 1px;
+  margin: 3px 2px;
+  background: var(--color-rule);
+}
 .mm-prose .mm-mermaid-dot {
   position: absolute;
   top: 2px;
