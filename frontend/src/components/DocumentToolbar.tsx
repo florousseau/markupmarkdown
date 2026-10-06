@@ -18,11 +18,22 @@ interface Props {
   /** Display name of another user currently holding the soft edit
    * lock; when set, the Edit button is disabled with a tooltip. */
   editLockedBy?: string;
-  onPushback: () => void;
+  /** Undefined hides the Push button (identity-only OAuth scope). */
+  onPushback?: () => void;
+  /** Replace the content with a local .md file as a new revision.
+   * Undefined hides the button (signed out, or mid-edit). */
+  onUploadVersion?: (file: File) => void;
+  uploadingVersion?: boolean;
   onShare: () => void;
   onDownload: () => void;
+  onExportComments: () => void;
   onDelete: () => void;
 }
+
+// Router state on the revision-history links: the reader picked this
+// version on purpose, so DocumentPage skips its "newer revision exists"
+// prompt.
+const REVISION_HISTORY_NAV = { fromRevisionHistory: true };
 
 export default function DocumentToolbar({
   doc,
@@ -33,8 +44,11 @@ export default function DocumentToolbar({
   onEdit,
   editLockedBy,
   onPushback,
+  onUploadVersion,
+  uploadingVersion,
   onShare,
   onDownload,
+  onExportComments,
   onDelete,
 }: Props) {
   const isGitHubDoc = Boolean(
@@ -48,7 +62,7 @@ export default function DocumentToolbar({
           a single source file). */}
       {doc.parent && (
         <div className="text-xs text-muted mb-1 flex items-center gap-2 flex-wrap">
-          <Link to={`/d/${doc.parent.id}`} className="text-accent hover:underline">
+          <Link to={`/d/${doc.parent.id}`} state={REVISION_HISTORY_NAV} className="text-accent hover:underline">
             ← {doc.parent.revisionIndex ? `v${doc.parent.revisionIndex}` : "Previous version"}
           </Link>
           {doc.revisionIndex && (
@@ -117,7 +131,34 @@ export default function DocumentToolbar({
             </svg>
             Revise with AI
           </button>
-          {isGitHubDoc && signedIn && (
+          {onUploadVersion && (
+            <label
+              className={`text-muted hover:text-ink ${
+                editLockedBy || uploadingVersion ? "opacity-50 cursor-not-allowed" : "cursor-pointer"
+              }`}
+              title={
+                editLockedBy
+                  ? `${editLockedBy} is editing this document. Try again in a few minutes.`
+                  : "Upload a new version of this file (.md). Saved as a new revision; open comments carry over."
+              }
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12" />
+              </svg>
+              <input
+                type="file"
+                accept=".md,text/markdown,text/plain"
+                className="hidden"
+                disabled={!!editLockedBy || uploadingVersion}
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  e.target.value = "";
+                  if (file) onUploadVersion(file);
+                }}
+              />
+            </label>
+          )}
+          {isGitHubDoc && signedIn && onPushback && (
             <button
               onClick={onPushback}
               className="text-muted hover:text-ink"
@@ -135,6 +176,16 @@ export default function DocumentToolbar({
               <circle cx="18" cy="19" r="3" />
               <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" />
               <line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
+            </svg>
+          </button>
+          <button
+            onClick={onExportComments}
+            className="text-muted hover:text-ink"
+            title="Export comments (to hand to an AI)"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+              <path d="M12 7v6M9 10l3 3 3-3" />
             </svg>
           </button>
           <button onClick={onDownload} className="text-muted hover:text-ink" title="Download as .md">
@@ -191,7 +242,7 @@ export default function DocumentToolbar({
           Direct revisions:
           {doc.children.map((c, i) => (
             <span key={c.id} className="inline-flex items-center gap-1">
-              <Link to={`/d/${c.id}`} className="text-accent hover:underline">
+              <Link to={`/d/${c.id}`} state={REVISION_HISTORY_NAV} className="text-accent hover:underline">
                 v{c.revisionIndex ?? (doc.revisionIndex ?? 1) + i + 1}
               </Link>
               {c.revisionMeta?.generatedBy && (

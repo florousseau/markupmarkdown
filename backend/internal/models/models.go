@@ -89,6 +89,13 @@ type Document struct {
 	// ListDocumentsForUser to scope the home-page list to docs you worked on.
 	CreatedByID string `bson:"created_by_id,omitempty" json:"-"`
 
+	// UploadFilename is the original file name of an uploaded doc
+	// (e.g. "SPEC.md"). Lets a relative link like `[x](SPEC.md#s)` in
+	// another upload by the same creator resolve to this doc — see
+	// resolveUploadLink. Empty for URL ingests and pre-field uploads
+	// (those fall back to a title match).
+	UploadFilename string `bson:"upload_filename,omitempty" json:"uploadFilename,omitempty"`
+
 	// DeletedAt is set when the doc enters soft-deleted state. The doc
 	// stays in MongoDB for ~30 days so the user can restore it from the
 	// Trash view; after that a background sweep will purge it.

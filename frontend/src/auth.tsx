@@ -7,6 +7,9 @@ interface AuthContextValue {
   isAdmin: boolean;
   githubEnabled: boolean;
   githubClientId?: string;
+  /** Whether the OAuth scope lets us push to repos. Defaults to true
+   * so an older backend without the flag keeps the push UI. */
+  githubRepoAccess: boolean;
   loading: boolean;
   refresh: () => Promise<void>;
   logout: () => Promise<void>;
@@ -21,6 +24,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [isAdmin, setIsAdmin] = useState(false);
   const [githubEnabled, setGithubEnabled] = useState(false);
   const [githubClientId, setGithubClientId] = useState<string | undefined>();
+  const [githubRepoAccess, setGithubRepoAccess] = useState(true);
   const [loading, setLoading] = useState(true);
 
   const refresh = useCallback(async () => {
@@ -28,6 +32,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const [cfg, me] = await Promise.all([api.authConfig(), api.authMe()]);
       setGithubEnabled(cfg.githubEnabled);
       setGithubClientId(cfg.githubClientId);
+      setGithubRepoAccess(cfg.githubRepoAccess !== false);
       setUser(me.user);
       setIsAdmin(Boolean(me.isAdmin));
     } catch {
@@ -66,13 +71,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       isAdmin,
       githubEnabled,
       githubClientId,
+      githubRepoAccess,
       loading,
       refresh,
       logout,
       loginURL,
       manageGitHubURL,
     }),
-    [user, isAdmin, githubEnabled, githubClientId, loading, refresh, logout, loginURL, manageGitHubURL]
+    [user, isAdmin, githubEnabled, githubClientId, githubRepoAccess, loading, refresh, logout, loginURL, manageGitHubURL]
   );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
