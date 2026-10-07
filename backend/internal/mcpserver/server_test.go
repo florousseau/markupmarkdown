@@ -46,6 +46,7 @@ type stubAPI struct {
 
 	addCommentCalls int
 	replyCalls      int
+	lastReplacement string
 	resolveCalls    int
 }
 
@@ -65,8 +66,9 @@ func (s *stubAPI) CreateComment(_ context.Context, _, _, _, _ string, _ int, _, 
 	s.addCommentCalls++
 	return s.newCmt, s.cmtErr
 }
-func (s *stubAPI) ReplyToComment(_ context.Context, _, _, _, _, _, _ string) (*models.Comment, error) {
+func (s *stubAPI) ReplyToComment(_ context.Context, _, _, _, replacement, _, _ string) (*models.Comment, error) {
 	s.replyCalls++
+	s.lastReplacement = replacement
 	return s.repCmt, s.repErr
 }
 func (s *stubAPI) ResolveComment(_ context.Context, _, _ string, _ bool) (*models.Comment, error) {

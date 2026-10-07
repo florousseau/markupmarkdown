@@ -113,3 +113,32 @@ describe("buildCommentsExport", () => {
     );
   });
 });
+
+describe("reply suggestions in the export", () => {
+  it("includes the active reply suggestion and labels superseded ones", () => {
+    const c = comment({
+      anchor: { start: 0, end: 0, exact: "budget est" },
+      suggestion: { replacement: "old root" },
+      replies: [
+        { id: "r1", author: "bot", body: "first try", createdAt: "", updatedAt: "", suggestion: { replacement: "budget sera" } },
+        { id: "r2", author: "bot", body: "second try", createdAt: "", updatedAt: "", suggestion: { replacement: "budget reste" } },
+      ],
+    });
+    const out = buildCommentsExport({ title: "T", content: SOURCE }, [c], { includeResolved: false });
+    expect(out).toContain("**Superseded suggestion (do not apply):**\n```\nold root\n```");
+    expect(out).toContain("**↳ bot:** first try\n\n**Superseded suggestion (do not apply):**\n```\nbudget sera\n```");
+    expect(out).toContain("**↳ bot:** second try\n\n**Suggested replacement:**\n```\nbudget reste\n```");
+  });
+
+  it("omits applied suggestions", () => {
+    const c = comment({
+      anchor: { start: 0, end: 0, exact: "budget est" },
+      replies: [
+        { id: "r1", author: "bot", body: "done", createdAt: "", updatedAt: "", suggestion: { replacement: "zzz", appliedAt: "2026-01-02T00:00:00Z" } },
+      ],
+    });
+    const out = buildCommentsExport({ title: "T", content: SOURCE }, [c], { includeResolved: false });
+    expect(out).not.toContain("zzz");
+  });
+});
+
