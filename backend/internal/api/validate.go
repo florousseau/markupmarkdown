@@ -58,3 +58,36 @@ func ValidateAnchor(a models.Anchor) error {
 	}
 	return nil
 }
+
+// errSuggestionThreadResolved is the one ValidateThreadSuggestion error
+// that is a state conflict (409) rather than a bad request (400).
+var errSuggestionThreadResolved = errors.New(
+	"this thread is resolved — reopen it before proposing a new suggestion")
+
+// ValidateThreadSuggestion checks a replacement proposed in a REPLY to
+// parent. The replacement targets parent's Anchor.Exact, so the thread
+// must be anchored (not doc-level), still anchored (not orphan), and
+// open. The replacement is kept verbatim (no trimming): it's the exact
+// markdown source that will replace the anchored span. REST createReply
+// and MCP reply both call this.
+func ValidateThreadSuggestion(parent *models.Comment, replacement string) error {
+	if isDocLevel(parent.Anchor) {
+		return errors.New("doc-level threads can't carry a suggestion — there's no anchored text to replace")
+	}
+	if parent.Orphan {
+		return errors.New("this thread lost its anchor (orphan) — it can't carry a suggestion until it's re-anchored")
+	}
+	if parent.Resolved {
+		return errSuggestionThreadResolved
+	}
+	if replacement == "" {
+		return errors.New("`replacement` must not be empty")
+	}
+	if len(replacement) > maxSuggestionReplacementLen {
+		return errors.New("`replacement` too long (max 32KB)")
+	}
+	if replacement == parent.Anchor.Exact {
+		return errors.New("`replacement` is identical to the anchored text — nothing to suggest")
+	}
+	return nil
+}

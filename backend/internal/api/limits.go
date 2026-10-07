@@ -28,7 +28,10 @@ const (
 	maxAnchorExactLen = 4 * 1024
 	// Prefix / Suffix context captured around an anchor (anchorresolve.go).
 	maxAnchorContextLen = 256
-	maxUploadContent    = 5 * 1024 * 1024
+	// Replacement text of a structured suggestion (same cap as the MCP
+	// add_suggestion tool).
+	maxSuggestionReplacementLen = 32 * 1024
+	maxUploadContent            = 5 * 1024 * 1024
 )
 
 // initLimits wires up all the in-memory throttles.

@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -27,6 +28,13 @@ type patchCommentRequest struct {
 type createReplyRequest struct {
 	Body   string `json:"body"`
 	Author string `json:"author"`
+	// Suggestion optionally proposes a replacement for the thread's
+	// anchored text (see ValidateThreadSuggestion). Ignored by
+	// updateReply — a suggestion is immutable; post a new reply to
+	// propose another one (the newest supersedes the older).
+	Suggestion *struct {
+		Replacement string `json:"replacement"`
+	} `json:"suggestion,omitempty"`
 }
 
 type resolveRequest struct {
@@ -222,6 +230,7 @@ func (a *API) decorate(r *http.Request, c *models.Comment) {
 	if c == nil {
 		return
 	}
+	markSuggestionStates(c)
 	vid := a.viewerID(r)
 	claim := ""
 	if vid == "" {
@@ -299,6 +308,7 @@ func (a *API) listComments(w http.ResponseWriter, r *http.Request) {
 		comments = []models.Comment{}
 	}
 	a.resolveAgentIdentities(r.Context(), comments)
+	markAllSuggestionStates(comments)
 	vid := a.viewerID(r)
 	claim := ""
 	if vid == "" {
@@ -615,13 +625,26 @@ func (a *API) createReply(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	var sugg *models.Suggestion
+	if req.Suggestion != nil {
+		if err := ValidateThreadSuggestion(parentComment, req.Suggestion.Replacement); err != nil {
+			status := http.StatusBadRequest
+			if errors.Is(err, errSuggestionThreadResolved) {
+				status = http.StatusConflict
+			}
+			writeError(w, status, err.Error())
+			return
+		}
+		sugg = &models.Suggestion{Replacement: req.Suggestion.Replacement}
+	}
 	now := time.Now().UTC()
 	reply := models.Reply{
-		ID:        uuid.NewString(),
-		Author:    a.resolveAuthor(r, req.Author),
-		Body:      body,
-		CreatedAt: now,
-		UpdatedAt: now,
+		ID:         uuid.NewString(),
+		Author:     a.resolveAuthor(r, req.Author),
+		Body:       body,
+		Suggestion: sugg,
+		CreatedAt:  now,
+		UpdatedAt:  now,
 	}
 	if u := a.currentUser(r); u != nil {
 		reply.AuthorID = u.ID
@@ -630,6 +653,9 @@ func (a *API) createReply(w http.ResponseWriter, r *http.Request) {
 		if info, ok := tokenInfoFromRequest(r); ok {
 			stampAgentWriteReply(&reply, info.TokenID, info.Label)
 			a.logTokenAction(r.Context(), info.TokenID, "reply.create", parentComment.DocumentID)
+			if sugg != nil {
+				a.logTokenAction(r.Context(), info.TokenID, "suggestion.create", parentComment.DocumentID)
+			}
 		}
 	}
 	c, appendErr := a.store.AppendReply(r.Context(), id, reply)

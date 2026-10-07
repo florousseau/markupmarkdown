@@ -173,6 +173,7 @@ func (a *API) Register(r *mux.Router) {
 	// creates a manual revision that replaces the anchor with the
 	// suggested replacement, and resolves the comment.
 	r.HandleFunc("/api/comments/{id}/apply-suggestion", a.applySuggestion).Methods("POST")
+	r.HandleFunc("/api/comments/{id}/replies/{replyId}/apply-suggestion", a.applyReplySuggestion).Methods("POST")
 	r.HandleFunc("/api/documents/{id}/apply-suggestions", a.applyAllSuggestions).Methods("POST")
 	r.HandleFunc("/api/documents/{id}/resolve-all", a.resolveAllComments).Methods("POST")
 
