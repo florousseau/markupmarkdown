@@ -10,6 +10,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"sort"
 	"strings"
@@ -23,7 +24,7 @@ import (
 )
 
 // applySuggestion is POST /api/comments/:id/apply-suggestion. Reads
-// the comment's Suggestion, replaces the first occurrence of
+// the comment's Suggestion, replaces the anchored occurrence of
 // Anchor.Exact in the doc content with Suggestion.Replacement, and
 // creates a manual revision + resolves the comment. Idempotent-ish:
 // once a suggestion is stamped applied (AppliedAt), a second call is
@@ -59,22 +60,22 @@ func (a *API) applySuggestion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Substitution against the source. First-occurrence replace on
-	// the exact anchored span, same primitive stat federation of
-	// GitHub's suggested changes uses.
+	// Substitution against the source, at the occurrence the anchor
+	// actually designates (see resolveAnchorInSource) — never "the
+	// first one that happens to match".
 	original := comment.Anchor.Exact
 	replacement := comment.Suggestion.Replacement
-	if !strings.Contains(doc.Content, original) {
-		writeError(w, http.StatusUnprocessableEntity,
-			"the anchored text no longer appears in the doc — re-anchor or re-write the suggestion")
-		return
-	}
 	// Reject no-op replacements — nothing to commit.
 	if original == replacement {
 		writeError(w, http.StatusBadRequest, "suggestion replacement is identical to the anchored text")
 		return
 	}
-	newContent := strings.Replace(doc.Content, original, replacement, 1)
+	pos, err := resolveAnchorInSource(doc.Content, comment.Anchor)
+	if err != nil {
+		writeAnchorResolveError(w, err)
+		return
+	}
+	newContent := doc.Content[:pos] + replacement + doc.Content[pos+len(original):]
 	if !strings.HasSuffix(newContent, "\n") {
 		newContent += "\n"
 	}
@@ -174,9 +175,10 @@ func (a *API) stampSuggestionApplied(ctx context.Context, commentID string, user
 
 // applyAllSuggestions is POST /api/documents/:id/apply-suggestions —
 // applies every open suggestion on the doc in ONE new revision.
-// Replacements run top-down in document order against a working copy;
-// a suggestion whose anchor no longer matches (earlier replacement ate
-// it, or the text changed) is skipped and reported, never guessed.
+// Each anchor is resolved against the original content (same rules as
+// the single apply), then replacements are spliced in document order;
+// a suggestion whose anchor is gone, ambiguous, or overlaps an earlier
+// one in the batch is skipped and reported, never guessed.
 func (a *API) applyAllSuggestions(w http.ResponseWriter, r *http.Request) {
 	docID := mux.Vars(r)["id"]
 	doc, accErr := a.checkDocAccess(r, docID)
@@ -198,11 +200,17 @@ func (a *API) applyAllSuggestions(w http.ResponseWriter, r *http.Request) {
 		internalError(w, "store.list_comments_for_batch_apply", err)
 		return
 	}
+	type skippedItem struct {
+		CommentID string `json:"commentId"`
+		Reason    string `json:"reason"`
+	}
+	var skipped []skippedItem
 	type candidate struct {
 		c   models.Comment
 		pos int
 	}
 	var cands []candidate
+	open := 0
 	for _, c := range comments {
 		if c.Resolved || c.Suggestion == nil || c.Suggestion.AppliedAt != nil {
 			continue
@@ -210,45 +218,50 @@ func (a *API) applyAllSuggestions(w http.ResponseWriter, r *http.Request) {
 		if c.Anchor.Exact == "" || c.Anchor.Exact == c.Suggestion.Replacement {
 			continue
 		}
-		pos := strings.Index(doc.Content, c.Anchor.Exact)
+		open++
+		// Every position is resolved against the ORIGINAL content, so
+		// a suggestion is applied exactly where it was anchored.
+		pos, err := resolveAnchorInSource(doc.Content, c.Anchor)
+		if err != nil {
+			reason := "anchored text not found (the text changed)"
+			if errors.Is(err, errAnchorAmbiguous) {
+				reason = "anchored text appears several times and the comment doesn't say which one"
+			}
+			skipped = append(skipped, skippedItem{CommentID: c.ID, Reason: reason})
+			continue
+		}
 		cands = append(cands, candidate{c: c, pos: pos})
 	}
-	if len(cands) == 0 {
+	if open == 0 {
 		writeError(w, http.StatusBadRequest, "no open suggestions to apply on this document")
 		return
 	}
-	// Document order: anchors found earlier apply first; unlocatable
-	// anchors (pos == -1) sort last and get skipped below.
+	// Document order. Two suggestions whose spans overlap can't both
+	// apply: the earlier one wins, the later is skipped and reported.
 	sortCandidates(cands, func(i, j int) bool {
-		pi, pj := cands[i].pos, cands[j].pos
-		if pi < 0 {
-			return false
+		if cands[i].pos != cands[j].pos {
+			return cands[i].pos < cands[j].pos
 		}
-		if pj < 0 {
-			return true
-		}
-		return pi < pj
+		return cands[i].c.CreatedAt.Before(cands[j].c.CreatedAt)
 	})
-
-	working := doc.Content
 	var applied []models.Comment
-	type skippedItem struct {
-		CommentID string `json:"commentId"`
-		Reason    string `json:"reason"`
-	}
-	var skipped []skippedItem
+	var b strings.Builder
+	cursor := 0
 	for _, cand := range cands {
-		exact := cand.c.Anchor.Exact
-		if !strings.Contains(working, exact) {
+		if cand.pos < cursor {
 			skipped = append(skipped, skippedItem{
 				CommentID: cand.c.ID,
-				Reason:    "anchored text not found (changed or consumed by an earlier suggestion)",
+				Reason:    "anchored text overlaps an earlier suggestion in this batch",
 			})
 			continue
 		}
-		working = strings.Replace(working, exact, cand.c.Suggestion.Replacement, 1)
+		b.WriteString(doc.Content[cursor:cand.pos])
+		b.WriteString(cand.c.Suggestion.Replacement)
+		cursor = cand.pos + len(cand.c.Anchor.Exact)
 		applied = append(applied, cand.c)
 	}
+	b.WriteString(doc.Content[cursor:])
+	working := b.String()
 	if len(applied) == 0 {
 		writeError(w, http.StatusUnprocessableEntity,
 			"none of the suggestions' anchors match the current content")
@@ -332,6 +345,17 @@ func (a *API) applyAllSuggestions(w http.ResponseWriter, r *http.Request) {
 		"applied":  appliedIDs,
 		"skipped":  skipped,
 	})
+}
+
+// writeAnchorResolveError maps resolveAnchorInSource errors to HTTP:
+// gone → 422 (as before), ambiguous → 409 (the doc is fine; the
+// comment needs a re-anchor before it can be applied).
+func writeAnchorResolveError(w http.ResponseWriter, err error) {
+	if errors.Is(err, errAnchorAmbiguous) {
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
+	writeError(w, http.StatusUnprocessableEntity, err.Error())
 }
 
 // sortCandidates is a tiny wrapper so the batch handler reads cleanly.

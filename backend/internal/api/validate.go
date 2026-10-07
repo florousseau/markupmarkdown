@@ -53,5 +53,8 @@ func ValidateAnchor(a models.Anchor) error {
 	if len(a.Exact) > maxAnchorExactLen {
 		return errors.New("anchor.exact too long")
 	}
+	if len(a.Prefix) > maxAnchorContextLen || len(a.Suffix) > maxAnchorContextLen {
+		return errors.New("anchor.prefix / anchor.suffix too long")
+	}
 	return nil
 }

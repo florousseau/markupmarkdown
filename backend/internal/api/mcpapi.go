@@ -302,12 +302,16 @@ func (a *API) CreateComment(ctx context.Context, userID, docID, body, quoted str
 		return nil, fmt.Errorf("internal: failed to resolve occurrence %d of %d", occurrence, matches)
 	}
 
+	// Capture surrounding context so a later apply can tell this
+	// occurrence apart from the others (see anchorresolve.go).
+	prefix, suffix := anchorContext(plain, start, end)
+
 	now := time.Now().UTC()
 	u, _ := a.store.GetUser(ctx, userID)
 	c := &models.Comment{
 		ID:         uuid.NewString(),
 		DocumentID: docID,
-		Anchor:     models.Anchor{Start: start, End: end, Exact: quoted},
+		Anchor:     models.Anchor{Start: start, End: end, Exact: quoted, Prefix: prefix, Suffix: suffix},
 		AuthorID:   userID,
 		Body:       strings.TrimSpace(body),
 		Replies:    []models.Reply{},

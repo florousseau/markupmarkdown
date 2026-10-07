@@ -1138,6 +1138,9 @@ func validateManualAnchor(req patchCommentAnchorRequest, content string) error {
 	if len(req.Exact) > maxAnchorExactLen {
 		return errors.New("anchor.exact too long")
 	}
+	if len(req.Prefix) > maxAnchorContextLen || len(req.Suffix) > maxAnchorContextLen {
+		return errors.New("anchor.prefix / anchor.suffix too long")
+	}
 	if strings.Contains(render.PlainText(content), req.Exact) {
 		return nil
 	}
