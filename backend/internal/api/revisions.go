@@ -387,11 +387,13 @@ func buildCarriedComment(src models.Comment, child *models.Document, now time.Ti
 		TokenID:         src.TokenID,
 		Body:            src.Body,
 		Resolved:        false,
+		Suggestion:      cloneSuggestion(src.Suggestion),
 		CreatedAt:       src.CreatedAt,
 		UpdatedAt:       now,
 	}
-	// Replies carry verbatim, with new IDs to avoid colliding with the
-	// parent's reply documents.
+	// Replies carry verbatim (suggestions included — dropping them
+	// silently lost every open suggestion on each new revision), with
+	// new IDs to avoid colliding with the parent's reply documents.
 	for _, rep := range src.Replies {
 		out.Replies = append(out.Replies, models.Reply{
 			ID:              uuid.NewString(),
@@ -401,6 +403,7 @@ func buildCarriedComment(src models.Comment, child *models.Document, now time.Ti
 			ActorKind:       rep.ActorKind,
 			TokenID:         rep.TokenID,
 			Body:            rep.Body,
+			Suggestion:      cloneSuggestion(rep.Suggestion),
 			CreatedAt:       rep.CreatedAt,
 			UpdatedAt:       rep.UpdatedAt,
 		})
@@ -431,6 +434,18 @@ func buildCarriedComment(src models.Comment, child *models.Document, now time.Ti
 		out.OriginalExact = res.OriginalExact
 	}
 	return out
+}
+
+// cloneSuggestion copies a suggestion for a carried comment so the
+// child never shares a pointer with the parent's struct. Applied stamps
+// travel too: they're history, and they keep the copy non-applicable.
+func cloneSuggestion(s *models.Suggestion) *models.Suggestion {
+	if s == nil {
+		return nil
+	}
+	cp := *s
+	cp.Active, cp.Superseded = false, false
+	return &cp
 }
 
 func (a *API) revisionErrorPayload(rev *ai.RevisionError) fetchErrorResponse {
