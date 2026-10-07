@@ -218,8 +218,10 @@ export interface TrashItem {
 }
 
 export interface RevisionMeta {
+  /** "manual", "suggestion", or the AI model id. */
   model: string;
-  appliedCommentIds: string[];
+  /** null on manual and suggestion revisions (Go nil slice). */
+  appliedCommentIds: string[] | null;
   tokensIn: number;
   tokensOut: number;
   generatedBy: string;
@@ -259,8 +261,9 @@ export interface ReviewSummary {
   commented: number;
 }
 
-/** Structured edit proposal attached to an anchored comment (P0-2).
- * `replacement` is what should replace `comment.anchor.exact`.
+/** Structured edit proposal attached to an anchored thread (P0-2) —
+ * on the root comment or on a reply. `replacement` is what should
+ * replace the ROOT comment's `anchor.exact`.
  * `appliedAt`/`appliedBy`/`appliedDocId` are stamped when a reviewer
  * clicks Apply — the resulting manual revision id is captured too. */
 export interface Suggestion {
@@ -268,6 +271,11 @@ export interface Suggestion {
   appliedAt?: string;
   appliedBy?: string;
   appliedDocId?: string;
+  /** Read-time flags from the server: the thread's one applicable
+   * suggestion (newest unapplied) vs older unapplied ones. See
+   * utils/suggestions.ts. */
+  active?: boolean;
+  superseded?: boolean;
 }
 
 export interface ParentSummary {
@@ -532,6 +540,9 @@ export interface Reply {
   ownerLogin?: string;
   body: string;
   bodyHtml?: string;
+  /** Optional concrete edit proposed in the thread; targets the root
+   * comment's anchored text. */
+  suggestion?: Suggestion;
   /** Set by the backend when the viewer is the human behind this reply
    * (direct author or owner of the bot/token that wrote it). */
   mine?: boolean;

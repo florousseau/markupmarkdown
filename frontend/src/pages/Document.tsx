@@ -51,6 +51,7 @@ import { useToast, toastMessageFor } from "../components/Toast";
 import { useSessionReadIds } from "../utils/sessionReadIds";
 import { relaxAnchors } from "../utils/anchoredLayout";
 import { downloadAsMarkdown } from "../utils/download";
+import { hasApplicableSuggestion } from "../utils/suggestions";
 
 type Filter = "open" | "unread" | "resolved" | "all";
 
@@ -337,6 +338,8 @@ export default function DocumentPage() {
         start: c.anchor.start,
         end: c.anchor.end,
         exact: c.anchor.exact,
+        prefix: c.anchor.prefix,
+        suffix: c.anchor.suffix,
         resolved: c.resolved,
         active: c.id === activeId,
       }));
@@ -399,7 +402,7 @@ export default function DocumentPage() {
         if (usingEditor) {
           const exact = c.anchor.exact || c.originalExact || "";
           if (!exact) return null;
-          const r = editorRef.current!.coordsForAnchor(exact);
+          const r = editorRef.current!.coordsForAnchor(exact, c.anchor);
           if (!r) return null;
           top = r.top;
         } else if (content) {
@@ -1144,6 +1147,8 @@ export default function DocumentPage() {
         start: anchor.start,
         end: anchor.end,
         exact: anchor.exact,
+        prefix: anchor.prefix,
+        suffix: anchor.suffix,
       });
       applyMutation((prev) => prev.map((x) => (x.id === updated.id ? updated : x)));
       setReanchorTarget(null);
@@ -1258,10 +1263,12 @@ export default function DocumentPage() {
       toastError(err, "Couldn't reopen that comment.");
     }
   }
-  async function handleApplySuggestion(c: Comment) {
-    if (!id || !c.suggestion) return;
+  async function handleApplySuggestion(c: Comment, replyId?: string) {
+    if (!id) return;
     try {
-      const newDoc = await api.applySuggestion(c.id);
+      const newDoc = replyId
+        ? await api.applyReplySuggestion(c.id, replyId)
+        : await api.applySuggestion(c.id);
       // The apply created a new doc — navigate to it so the reviewer
       // sees the change reflected in the source.
       navigate(`/d/${newDoc.id}`);
@@ -1272,13 +1279,11 @@ export default function DocumentPage() {
   }
   async function handleApplyAllSuggestions() {
     if (!id || applyingAll) return;
-    const n = comments.filter(
-      (c) => !c.resolved && c.suggestion && !c.suggestion.appliedAt
-    ).length;
+    const n = comments.filter(hasApplicableSuggestion).length;
     const ok = await dialog.confirm({
       title: `Apply ${n} suggested changes?`,
       body:
-        "All open suggestions apply top-down in one new revision. " +
+        "Each open thread's latest suggestion applies top-down in one new revision. " +
         "Any suggestion whose text conflicts with an earlier one is " +
         "skipped and stays open.",
       confirmLabel: "Apply all",
@@ -1446,9 +1451,8 @@ export default function DocumentPage() {
 
   const openCount = comments.filter((c) => !c.resolved).length;
   const resolvedCount = comments.filter((c) => c.resolved).length;
-  const openSuggestionCount = comments.filter(
-    (c) => !c.resolved && c.suggestion && !c.suggestion.appliedAt
-  ).length;
+  // Threads whose active suggestion (root or reply) "Apply all" takes.
+  const openSuggestionCount = comments.filter(hasApplicableSuggestion).length;
   const unreadCount = comments.filter(isUnread).length;
   // Drift is present when upstream's latest SHA differs from our
   // baseline AND the user hasn't explicitly dismissed *this* SHA. The
@@ -1522,7 +1526,7 @@ export default function DocumentPage() {
       const exact = c?.anchor?.exact || c?.originalExact || "";
       if (exact && editorRef.current) {
         scrolledActivationRef.current = activation;
-        editorRef.current.scrollAnchorIntoView(exact);
+        editorRef.current.scrollAnchorIntoView(exact, c?.anchor);
       }
       return;
     }
@@ -1795,6 +1799,11 @@ export default function DocumentPage() {
               activeAnchorExact={
                 activeId
                   ? comments.find((c) => c.id === activeId)?.anchor.exact
+                  : undefined
+              }
+              activeAnchorContext={
+                activeId
+                  ? comments.find((c) => c.id === activeId)?.anchor
                   : undefined
               }
               onLayoutTick={() => setLayoutTick((n) => n + 1)}
@@ -2133,9 +2142,14 @@ export default function DocumentPage() {
                     onDelete={() => handleDelete(c)}
                     onEditReply={(rid, body) => handleEditReply(c, rid, body)}
                     onDeleteReply={(rid) => handleDeleteReply(c, rid)}
+                    // Applying is browser-session only (the server 403s
+                    // tokens): offer it to signed-in viewers.
                     onApplySuggestion={
-                      c.suggestion && !c.suggestion.appliedAt
-                        ? () => handleApplySuggestion(c)
+                      user ? () => handleApplySuggestion(c) : undefined
+                    }
+                    onApplyReplySuggestion={
+                      user
+                        ? (rid) => handleApplySuggestion(c, rid)
                         : undefined
                     }
                   />

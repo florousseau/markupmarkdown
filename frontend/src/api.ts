@@ -696,13 +696,23 @@ export const api = {
     req<MdDocument>(`/api/comments/${commentId}/apply-suggestion`, {
       method: "POST",
     }),
-  /** Apply ALL open suggestions on a doc in one new revision.
-   * Returns the child doc + which comments applied/skipped. */
+  /** Apply the suggestion carried by a reply. Same effects as
+   * applySuggestion: it replaces the thread's anchored text, creates a
+   * revision and resolves the thread. 409 when a newer suggestion in
+   * the thread supersedes it. */
+  applyReplySuggestion: (commentId: string, replyId: string) =>
+    req<MdDocument>(
+      `/api/comments/${commentId}/replies/${replyId}/apply-suggestion`,
+      { method: "POST" }
+    ),
+  /** Apply the active suggestion of every open thread (root or reply)
+   * in one new revision. Returns the child doc + which threads
+   * applied/skipped. */
   applyAllSuggestions: (documentId: string) =>
     req<{
       document: MdDocument;
       applied: string[];
-      skipped: { commentId: string; reason: string }[];
+      skipped: { commentId: string; replyId?: string; reason: string }[];
     }>(`/api/documents/${documentId}/apply-suggestions`, { method: "POST" }),
 
   // --- P0-3: Agent revision acceptance ---

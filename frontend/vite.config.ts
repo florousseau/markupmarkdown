@@ -12,6 +12,11 @@ export default defineConfig({
         target: "http://localhost:4721",
         changeOrigin: true,
       },
+      // MCP server (agents, and the reply-suggestions E2E spec).
+      "/mcp": {
+        target: "http://localhost:4721",
+        changeOrigin: true,
+      },
     },
   },
 });

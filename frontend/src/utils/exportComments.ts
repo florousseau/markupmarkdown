@@ -2,7 +2,8 @@
 // meant to be handed to any AI (or human) editing the file locally.
 // Data only — a title line, then the comments; no instructions.
 
-import type { Comment, MdDocument } from "../types";
+import type { Comment, MdDocument, Suggestion } from "../types";
+import { activeSuggestion } from "./suggestions";
 
 export interface ExportOptions {
   includeResolved: boolean;
@@ -80,16 +81,27 @@ function fenceFor(s: string): string {
   return "`".repeat(Math.max(3, longest + 1));
 }
 
+/** Unapplied suggestion as a fenced block. Only the thread's active
+ * one is "the" suggested replacement; older ones are labeled
+ * superseded so whoever edits from the export doesn't apply them. */
+function suggestionBlock(s: Suggestion | undefined, active: boolean): string | null {
+  if (!s || s.appliedAt) return null;
+  const f = fenceFor(s.replacement);
+  const label = active ? "Suggested replacement" : "Superseded suggestion (do not apply)";
+  return `**${label}:**\n${f}\n${s.replacement}\n${f}`;
+}
+
 function commentBlock(c: Comment, quoted: string | null): string {
   const parts: string[] = [];
+  const active = activeSuggestion(c);
   if (quoted) parts.push(quote(quoted));
   parts.push(`**${c.author}:** ${c.body.trim()}`);
-  if (c.suggestion && !c.suggestion.appliedAt) {
-    const f = fenceFor(c.suggestion.replacement);
-    parts.push(`**Suggested replacement:**\n${f}\n${c.suggestion.replacement}\n${f}`);
-  }
+  const root = suggestionBlock(c.suggestion, active?.replyId === null);
+  if (root) parts.push(root);
   for (const r of c.replies ?? []) {
     parts.push(`**↳ ${r.author}:** ${r.body.trim()}`);
+    const sb = suggestionBlock(r.suggestion, active?.replyId === r.id);
+    if (sb) parts.push(sb);
   }
   if (c.resolved) parts.push("_Resolved_");
   return parts.join("\n\n");

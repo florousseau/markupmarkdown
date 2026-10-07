@@ -13,8 +13,8 @@ import (
 
 // Maximum body sizes per route group, in bytes.
 const (
-	maxBodyAuth     = 4 * 1024        // auth payloads
-	maxBodyComment  = 64 * 1024       // comment body + anchor
+	maxBodyAuth     = 4 * 1024         // auth payloads
+	maxBodyComment  = 64 * 1024        // comment body + anchor
 	maxBodyRevision = 10 * 1024 * 1024 // accept-revision content
 	maxBodyDocument = 10 * 1024 * 1024 // upload content
 	maxBodyDefault  = 256 * 1024
@@ -22,11 +22,16 @@ const (
 
 // Field length caps.
 const (
-	maxTitleLen        = 200
-	maxCommentBodyLen  = 16 * 1024
-	maxReplyBodyLen    = 16 * 1024
-	maxAnchorExactLen  = 4 * 1024
-	maxUploadContent   = 5 * 1024 * 1024
+	maxTitleLen       = 200
+	maxCommentBodyLen = 16 * 1024
+	maxReplyBodyLen   = 16 * 1024
+	maxAnchorExactLen = 4 * 1024
+	// Prefix / Suffix context captured around an anchor (anchorresolve.go).
+	maxAnchorContextLen = 256
+	// Replacement text of a structured suggestion (same cap as the MCP
+	// add_suggestion tool).
+	maxSuggestionReplacementLen = 32 * 1024
+	maxUploadContent            = 5 * 1024 * 1024
 )
 
 // initLimits wires up all the in-memory throttles.

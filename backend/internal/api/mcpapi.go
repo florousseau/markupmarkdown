@@ -238,7 +238,13 @@ func (a *API) ListDocumentsForUser(ctx context.Context, userID string, includeTr
 }
 
 func (a *API) ListComments(ctx context.Context, docID string) ([]models.Comment, error) {
-	return a.store.ListComments(ctx, docID)
+	comments, err := a.store.ListComments(ctx, docID)
+	if err != nil {
+		return nil, err
+	}
+	// Agents need to know which suggestion of a thread is the live one.
+	markAllSuggestionStates(comments)
+	return comments, nil
 }
 
 // mcpDocAccess re-verifies that the token owner currently has GitHub
@@ -302,12 +308,16 @@ func (a *API) CreateComment(ctx context.Context, userID, docID, body, quoted str
 		return nil, fmt.Errorf("internal: failed to resolve occurrence %d of %d", occurrence, matches)
 	}
 
+	// Capture surrounding context so a later apply can tell this
+	// occurrence apart from the others (see anchorresolve.go).
+	prefix, suffix := anchorContext(plain, start, end)
+
 	now := time.Now().UTC()
 	u, _ := a.store.GetUser(ctx, userID)
 	c := &models.Comment{
 		ID:         uuid.NewString(),
 		DocumentID: docID,
-		Anchor:     models.Anchor{Start: start, End: end, Exact: quoted},
+		Anchor:     models.Anchor{Start: start, End: end, Exact: quoted, Prefix: prefix, Suffix: suffix},
 		AuthorID:   userID,
 		Body:       strings.TrimSpace(body),
 		Replies:    []models.Reply{},
@@ -327,30 +337,42 @@ func (a *API) CreateComment(ctx context.Context, userID, docID, body, quoted str
 	return c, nil
 }
 
-func (a *API) ReplyToComment(ctx context.Context, userID, commentID, body, tokenID, agentLabel string) (*models.Comment, error) {
-	parent, err := a.store.GetComment(ctx, commentID)
-	if err != nil || parent == nil {
-		return nil, errors.New("comment not found")
+// ReplyToComment appends an agent reply to a thread. When replacement
+// is non-empty the reply carries a structured suggestion targeting the
+// thread's anchored text — the way an agent answers a human's change
+// request in place instead of opening a second thread.
+func (a *API) ReplyToComment(ctx context.Context, userID, commentID, body, replacement, tokenID, agentLabel string) (*models.Comment, error) {
+	// Same per-comment repo-access re-check every other MCP write does
+	// (rule #8) — this path used to skip it.
+	doc, parent, err := a.mcpDocAccessForComment(ctx, userID, commentID)
+	if err != nil {
+		return nil, err
 	}
-	doc, err := a.store.GetDocument(ctx, parent.DocumentID)
-	if err != nil || doc == nil {
-		return nil, errors.New("document not found")
+	var sugg *models.Suggestion
+	if replacement != "" {
+		if err := ValidateThreadSuggestion(parent, replacement); err != nil {
+			return nil, err
+		}
+		sugg = &models.Suggestion{Replacement: replacement}
 	}
 	u, _ := a.store.GetUser(ctx, userID)
 	now := time.Now().UTC()
 	reply := models.Reply{
-		ID:        uuid.NewString(),
-		AuthorID:  userID,
-		Body:      strings.TrimSpace(body),
-		ActorKind: models.ActorAgent,
-		CreatedAt: now,
-		UpdatedAt: now,
+		ID:         uuid.NewString(),
+		AuthorID:   userID,
+		Body:       strings.TrimSpace(body),
+		ActorKind:  models.ActorAgent,
+		Suggestion: sugg,
+		CreatedAt:  now,
+		UpdatedAt:  now,
 	}
 	stampAgentWriteReply(&reply, tokenID, agentLabel)
-	_ = u
 	c, err := a.store.AppendReply(ctx, commentID, reply)
 	if err != nil {
 		return nil, sanitizeStoreErr("mcp.reply.append", err)
+	}
+	if c == nil {
+		return nil, errors.New("comment not found")
 	}
 	a.hub.Broadcast(c.DocumentID, "comments-updated")
 	a.fanOutCommentNotifications(fanOutInput{
@@ -358,6 +380,7 @@ func (a *API) ReplyToComment(ctx context.Context, userID, commentID, body, token
 		Comment: c, ReplyOf: parent, Actor: u,
 	})
 	a.resolveAgentIdentity(ctx, c)
+	markSuggestionStates(c)
 	return c, nil
 }
 
