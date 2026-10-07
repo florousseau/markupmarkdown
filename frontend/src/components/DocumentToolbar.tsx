@@ -206,11 +206,16 @@ export default function DocumentToolbar({
           </svg>
           {doc.revisionMeta.model === "manual" ? (
             <>Manual edit by {doc.revisionMeta.generatedBy}</>
+          ) : doc.revisionMeta.model === "suggestion" ? (
+            // Apply-suggestion revisions carry no appliedCommentIds
+            // (null over the wire) — reading .length here blanked the
+            // page right after every Apply.
+            <>Suggestion applied by {doc.revisionMeta.generatedBy}</>
           ) : (
             <>
               AI-revised by {doc.revisionMeta.generatedBy} — applied{" "}
-              {doc.revisionMeta.appliedCommentIds.length} comment
-              {doc.revisionMeta.appliedCommentIds.length === 1 ? "" : "s"}
+              {doc.revisionMeta.appliedCommentIds?.length ?? 0} comment
+              {doc.revisionMeta.appliedCommentIds?.length === 1 ? "" : "s"}
             </>
           )}
           {doc.revisionMeta.actorKind === "agent" && (

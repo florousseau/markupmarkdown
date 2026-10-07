@@ -218,8 +218,10 @@ export interface TrashItem {
 }
 
 export interface RevisionMeta {
+  /** "manual", "suggestion", or the AI model id. */
   model: string;
-  appliedCommentIds: string[];
+  /** null on manual and suggestion revisions (Go nil slice). */
+  appliedCommentIds: string[] | null;
   tokensIn: number;
   tokensOut: number;
   generatedBy: string;
