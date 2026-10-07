@@ -19,6 +19,11 @@ import { EditorSelection, StateEffect, StateField } from "@codemirror/state";
 import { Decoration, type DecorationSet } from "@codemirror/view";
 import { oneDark } from "@codemirror/theme-one-dark";
 import MarkdownRender from "./MarkdownRender";
+import {
+  lettersAndDigits,
+  occurrenceOffsets,
+  pickOccurrenceByContext,
+} from "../utils/anchor";
 import { baseURLForDoc } from "../utils/baseUrl";
 import {
   applyCodeBlock,
@@ -59,10 +64,18 @@ const activeHighlightField = StateField.define<DecorationSet>({
 // CodeMirror where each comment's quoted text lives instead.
 export interface EditorPaneHandle {
   /** Locate `exact` in the editor's current content and return its
-   * viewport-relative top/bottom in pixels, or null when no match. */
-  coordsForAnchor(exact: string): { top: number; bottom: number } | null;
+   * viewport-relative top/bottom in pixels, or null when no match.
+   * `ctx` (the anchor's prefix / suffix) picks the right occurrence
+   * when `exact` appears several times. */
+  coordsForAnchor(exact: string, ctx?: AnchorContext): { top: number; bottom: number } | null;
   /** Scroll the editor so `exact` is visible. */
-  scrollAnchorIntoView(exact: string): void;
+  scrollAnchorIntoView(exact: string, ctx?: AnchorContext): void;
+}
+
+/** Rendered-text context captured around an anchor. */
+export interface AnchorContext {
+  prefix?: string;
+  suffix?: string;
 }
 
 interface Props {
@@ -75,6 +88,9 @@ interface Props {
    * find its quoted text in the raw Markdown and select it so the
    * user can see which span the comment is anchored to. */
   activeAnchorExact?: string;
+  /** Prefix / suffix of the active anchor, to pick the right
+   * occurrence of activeAnchorExact. */
+  activeAnchorContext?: AnchorContext;
   /** Fires when the editor scrolls or its size changes — the parent
    * uses this as a layout-tick so the anchored comment cards reflow
    * to match the new editor positions. */
@@ -98,6 +114,7 @@ const EditorPane = forwardRef<EditorPaneHandle, Props>(function EditorPane({
   onSave,
   onCancel,
   activeAnchorExact,
+  activeAnchorContext,
   onLayoutTick,
 }, ref) {
   const [content, setContent] = useState(initialContent);
@@ -293,7 +310,7 @@ const EditorPane = forwardRef<EditorPaneHandle, Props>(function EditorPane({
       return;
     }
     const text = view.state.doc.toString();
-    const idx = findApproxIndex(text, activeAnchorExact);
+    const idx = findApproxIndex(text, activeAnchorExact, activeAnchorContext);
     if (idx < 0) {
       view.dispatch({ effects: setActiveHighlight.of(null) });
       return;
@@ -302,7 +319,7 @@ const EditorPane = forwardRef<EditorPaneHandle, Props>(function EditorPane({
     view.dispatch({
       effects: setActiveHighlight.of({ from: idx, to: end }),
     });
-  }, [activeAnchorExact]);
+  }, [activeAnchorExact, activeAnchorContext?.prefix, activeAnchorContext?.suffix]);
 
   function openSearch() {
     const view = cmRef.current?.view;
@@ -317,11 +334,11 @@ const EditorPane = forwardRef<EditorPaneHandle, Props>(function EditorPane({
   // the fallback so cards still get a sensible Y even when the
   // corresponding line isn't currently in the viewport.
   useImperativeHandle(ref, () => ({
-    coordsForAnchor(exact) {
+    coordsForAnchor(exact, ctx) {
       const view = cmRef.current?.view;
       if (!view || !exact) return null;
       const text = view.state.doc.toString();
-      const idx = findApproxIndex(text, exact);
+      const idx = findApproxIndex(text, exact, ctx);
       if (idx < 0) return null;
       const end = idx + matchLength(text, idx, exact);
       const start = view.coordsAtPos(idx);
@@ -342,10 +359,10 @@ const EditorPane = forwardRef<EditorPaneHandle, Props>(function EditorPane({
         return null;
       }
     },
-    scrollAnchorIntoView(exact) {
+    scrollAnchorIntoView(exact, ctx) {
       const view = cmRef.current?.view;
       if (!view || !exact) return;
-      const idx = findApproxIndex(view.state.doc.toString(), exact);
+      const idx = findApproxIndex(view.state.doc.toString(), exact, ctx);
       if (idx < 0) return;
 
       // cm-scroller has overflow:visible so the body is the actual
@@ -572,13 +589,22 @@ function ToolbarButton({
 // findApproxIndex tries to locate `needle` in `text`. The needle was
 // captured from rendered textContent, so it might span Markdown
 // formatting that doesn't appear verbatim in source (e.g. " first
-// draft " between **…** asterisks). Strategy: exact match → trim
-// match → longest contiguous internal substring. Returns -1 when
-// nothing reasonable matches.
-function findApproxIndex(text: string, needle: string): number {
+// draft " between **…** asterisks). Strategy: exact match (the
+// occurrence whose source context matches `ctx` when the needle
+// repeats, else the first) → trim match → longest contiguous internal
+// substring. Returns -1 when nothing reasonable matches.
+function findApproxIndex(text: string, needle: string, ctx?: AnchorContext): number {
   if (!needle) return -1;
-  const idx = text.indexOf(needle);
-  if (idx >= 0) return idx;
+  const offs = occurrenceOffsets(text, needle);
+  if (offs.length > 1 && ctx) {
+    // Context was captured in rendered text; compare letters/digits
+    // only so markdown markers in the source don't get in the way.
+    const picked = pickOccurrenceByContext(
+      text, offs, needle.length, ctx.prefix, ctx.suffix, lettersAndDigits
+    );
+    if (picked >= 0) return picked;
+  }
+  if (offs.length > 0) return offs[0];
   const trimmed = needle.trim();
   if (trimmed && trimmed !== needle) {
     const j = text.indexOf(trimmed);
