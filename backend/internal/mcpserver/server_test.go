@@ -65,7 +65,7 @@ func (s *stubAPI) CreateComment(_ context.Context, _, _, _, _ string, _ int, _, 
 	s.addCommentCalls++
 	return s.newCmt, s.cmtErr
 }
-func (s *stubAPI) ReplyToComment(_ context.Context, _, _, _, _, _ string) (*models.Comment, error) {
+func (s *stubAPI) ReplyToComment(_ context.Context, _, _, _, _, _, _ string) (*models.Comment, error) {
 	s.replyCalls++
 	return s.repCmt, s.repErr
 }

@@ -52,7 +52,7 @@ Tokens can be scoped per-agent and revoked any time. Never embed the token in a 
 |---|---|
 | `list_documents` | Lists docs the calling identity has worked on. Set `include_trash: true` to include soft-deleted docs. |
 | `get_document` | Full markdown content + metadata. Errors with "access denied" for private docs the token's user can't read. |
-| `list_comments` | Comments on a doc. Filter: `open` (default), `resolved`, `all`. Set `render_html: true` to get sanitized HTML rendering of bodies alongside the raw markdown. |
+| `list_comments` | Comments on a doc. Filter: `open` (default), `resolved`, `all`. Set `render_html: true` to get sanitized HTML rendering of bodies alongside the raw markdown. A `suggestion` can sit on the root comment or on any reply; each carries `active: true` (the thread's one applicable suggestion — the newest unapplied), `superseded: true` (older unapplied, no longer applicable), or `appliedAt` (a human applied it). |
 | `list_revisions` | Returns the full revision chain (root → leaf) for any doc with each node's `revisionIndex`, `model`, `generatedBy`, `actorKind`, and timestamps. One call replaces walking `parent` / `children` from `get_document`. |
 | `list_review_requests` | **Check this at the start of a session.** Returns the pending review requests targeting your token — docs a human has asked you to review. Requests appear two ways: a human clicked "Request review" on a doc, or your token is a **standing reviewer** on a doc's revision chain and a new revision just landed (you'll be re-summoned on every revision until a human removes the subscription). To fulfill one: read the doc, leave feedback (`add_comment` / `add_suggestion`), then `set_review_state`. Setting a state auto-completes the request; there is no separate "done" call. |
 
@@ -61,8 +61,8 @@ Tokens can be scoped per-agent and revoked any time. Never embed the token in a 
 | Tool | What it does |
 |---|---|
 | `add_comment` | Anchors a new comment to a **verbatim substring** of the document. If the substring appears multiple times, pass `occurrence: N` (1-based). |
-| `add_suggestion` | Anchors a comment PLUS a structured "replace this with THIS" edit proposal. Reviewers see a one-click Apply button that creates a manual revision. Prefer this over `add_comment` when you have a specific concrete replacement in mind — empirically the highest-actionability review artifact. |
-| `reply` | Reply to an existing thread. |
+| `add_suggestion` | Opens a NEW thread: anchors a comment PLUS a structured "replace this with THIS" edit proposal. Reviewers see a one-click Apply button that creates a manual revision. Use it for issues **you** spotted. To answer a change request a human already left, use `reply` + `replacement` instead. |
+| `reply` | Reply to an existing thread. Optional `replacement` attaches a structured suggestion to your reply: it replaces the **thread's anchored text** (the root comment's `anchor.exact`) and the human gets the same one-click Apply. The newest suggestion in a thread supersedes older ones. Refused on doc-level, orphaned and resolved threads. |
 | `resolve_comment` / `reopen_comment` | Lifecycle. Resolved threads become eligible inputs for `revise_with_ai`. |
 | `patch_anchor` | Re-anchor an orphan comment, or convert any comment to a document-level pin (`doc_level: true`). Mine-only — you can only re-anchor comments you (or an agent token you own) wrote. |
 | `delete_comment` | Remove a thread you authored. Mine-only — same require-mine guard as the REST surface. |
@@ -83,7 +83,7 @@ Docs may carry deterministic lint rules (required sections, banned phrases, term
 
 ### Agent-proposed revisions
 
-Any revision written under an agent token (via `edit_document`, `revise_with_ai accept=true`, `merge_from_github`, or `apply_suggestion`) lands as **proposed**, not accepted. The pushback flow refuses to ship an unaccepted agent revision to GitHub until a **human** accepts it via `POST /api/documents/:id/accept-revision` (cookie session only — agents cannot self-accept, by design). This is the GitBook change-request pattern applied to the markupmarkdown chain: agent edits are real and live in the revision chain immediately, but the trip to the real repo is gated on a human review. Design principle: agents are first-class reviewers, not autonomous committers.
+Any revision written under an agent token (via `edit_document`, `revise_with_ai accept=true`, or `merge_from_github`) lands as **proposed**, not accepted. The pushback flow refuses to ship an unaccepted agent revision to GitHub until a **human** accepts it via `POST /api/documents/:id/accept-revision` (cookie session only — agents cannot self-accept, by design). This is the GitBook change-request pattern applied to the markupmarkdown chain: agent edits are real and live in the revision chain immediately, but the trip to the real repo is gated on a human review. Design principle: agents are first-class reviewers, not autonomous committers.
 
 ### When to edit vs revise vs merge
 
@@ -95,10 +95,30 @@ Any revision written under an agent token (via `edit_document`, `revise_with_ai 
 | Revision is approved and ready to ship back to the repo | `push_to_github` (PR mode) |
 | Comment you wrote has become an orphan after a merge / sync | `patch_anchor` |
 
+### Answering change requests in the thread
+
+The core review loop: a human comments a span ("this is unclear", "use the new product name") → you read open threads with `list_comments` → you `reply` **in that thread** with a `replacement` → the human clicks **Apply** (the anchored text is replaced in a new revision and the thread is resolved) or replies asking for something else → you reply again with a new `replacement`, which supersedes your previous one.
+
+`reply` + `replacement` vs `add_suggestion`:
+
+| Situation | Tool |
+|---|---|
+| A human asked for a change in an existing thread | `reply` with `replacement` in their thread |
+| The human pushed back on your suggestion | `reply` again with a new `replacement` (the old one becomes `superseded`) |
+| You found an issue nobody commented on yet | `add_suggestion` (new thread) |
+| The thread is doc-level (no anchored text) or orphaned | No structured suggestion possible — explain in a plain `reply`, or use `add_suggestion` on the precise span |
+
+Rules for `replacement`:
+
+- It is the **exact markdown source** that replaces the thread's `anchor.exact`, nothing more. Don't include text outside the anchored span, and keep the markup the span carries in the source (`**bold**`, links, backticks). Read the source with `get_document` when the anchor sits on formatted text.
+- If the anchored text appears several times in the doc, Apply uses the comment's anchor context to find the right occurrence; when it can't tell, it refuses (409) rather than guessing — the human re-anchors and applies again.
+- Applying is **human-only** (cookie session). No MCP tool applies a suggestion, and the REST apply endpoints return 403 to every token.
+
 ### When agents should do what
 
 - **Starting a session**: call `list_review_requests` first. If a human has summoned you to review a doc, that's your work queue — handle it before anything else. The fulfillment loop: `get_document` → `list_comments` → leave feedback (`add_comment` / `add_suggestion`) → `set_review_state`. The state call completes the request automatically.
 - **Reading**: use `get_document` + `list_comments` (filter=`all`, `render_html: true`) for a complete review snapshot.
+- **Answering a human's change request**: `reply` in their thread with `replacement` (see above) — don't open a parallel thread.
 - **Suggesting changes**: leave a thread per suggestion with `add_comment`. Keep bodies focused on a single concern; the AI revision step works best when each thread says one thing.
 - **Discussing**: `reply` to humans' threads to explain reasoning. Don't resolve threads yourself unless the human explicitly delegated that decision.
 - **Triggering revisions**: only with explicit human approval. The typical flow is: human approves N resolved threads → asks agent to apply → agent calls `revise_with_ai` with `accept: false` → agent shows the human the diff → on confirmation, agent calls again with `accept: true`.
@@ -193,6 +213,20 @@ Mermaid diagrams (```` ```mermaid ```` fences) render as diagrams in the UI, but
     "body": "Sources for the original benchmark: [link]. I can produce a revised graph if useful."
   }
 }
+```
+
+### Answer a change request with a concrete fix, in the thread
+
+```jsonc
+{
+  "name": "reply",
+  "arguments": {
+    "comment_id": "c1d2e3...",
+    "body": "Reworded to name the new product, as asked.",
+    "replacement": "**Acme Cloud** keeps your data in the EU"
+  }
+}
+// → the thread now shows your suggestion with an Apply button for the human.
 ```
 
 ### Apply a targeted manual edit (no AI revision)

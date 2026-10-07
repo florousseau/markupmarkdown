@@ -32,7 +32,9 @@ type API interface {
 	ListDocumentsForUser(ctx context.Context, userID string, includeTrash bool) ([]models.Document, error)
 	ListComments(ctx context.Context, docID string) ([]models.Comment, error)
 	CreateComment(ctx context.Context, userID, docID, body, quotedText string, occurrence int, tokenID, agentLabel string) (*models.Comment, error)
-	ReplyToComment(ctx context.Context, userID, commentID, body, tokenID, agentLabel string) (*models.Comment, error)
+	// ReplyToComment appends a reply; a non-empty replacement attaches a
+	// structured suggestion targeting the thread's anchored text.
+	ReplyToComment(ctx context.Context, userID, commentID, body, replacement, tokenID, agentLabel string) (*models.Comment, error)
 	ResolveComment(ctx context.Context, userID, commentID string, reopen bool) (*models.Comment, error)
 	// DeleteComment removes a comment authored by the requesting
 	// identity (or by an agent token owned by the user). Mirrors the
@@ -359,7 +361,7 @@ func (h *handlers) getDoc(ctx context.Context, req mcp.CallToolRequest) (*mcp.Ca
 
 func listCommentsTool() mcp.Tool {
 	return mcp.NewTool("list_comments",
-		mcp.WithDescription("List the comment threads on a document. Each result includes the anchor (the exact quoted text in the doc the comment refers to), the body (markdown), reply chain, and resolved state. Optionally pre-renders bodies to sanitized HTML."),
+		mcp.WithDescription("List the comment threads on a document. Each result includes the anchor (the exact quoted text in the doc the comment refers to), the body (markdown), reply chain, and resolved state. Suggestions (on the root comment or on any reply) carry `active: true` for the thread's one applicable suggestion (the newest unapplied), `superseded: true` for older unapplied ones, and `appliedAt` once a human applied them. Optionally pre-renders bodies to sanitized HTML."),
 		mcp.WithString("document_id", mcp.Required(), mcp.Description("Document UUID.")),
 		mcp.WithString("filter", mcp.Description("'open' (default), 'resolved', or 'all'.")),
 		mcp.WithBoolean("render_html", mcp.Description("If true, include sanitized HTML rendering of each body alongside the raw markdown.")),
@@ -446,9 +448,14 @@ func (h *handlers) addComment(ctx context.Context, req mcp.CallToolRequest) (*mc
 
 func replyTool() mcp.Tool {
 	return mcp.NewTool("reply",
-		mcp.WithDescription("Reply to an existing comment thread."),
-		mcp.WithString("comment_id", mcp.Required(), mcp.Description("Comment UUID to reply to.")),
-		mcp.WithString("body", mcp.Required(), mcp.Description("Reply, in markdown.")),
+		mcp.WithDescription(`Reply to an existing comment thread, optionally with a concrete edit.
+
+To answer a human's change request, reply IN their thread with 'replacement' rather than opening a new thread with add_suggestion: the fix stays next to the ask, and the human gets a one-click Apply on your reply. If they push back, reply again with a new 'replacement' — the newest suggestion in a thread supersedes the older ones (only the newest can be applied).
+
+'replacement' replaces the thread's anchored text (the root comment's anchor.exact) and must be the EXACT markdown source for that span — keep the surrounding markup (**, links, backticks) the span had in the source. Refused on doc-level, orphaned, or resolved threads, and when identical to the anchored text. Applying is human-only; agents can't apply suggestions.`),
+		mcp.WithString("comment_id", mcp.Required(), mcp.Description("Comment UUID (the thread's root comment) to reply to.")),
+		mcp.WithString("body", mcp.Required(), mcp.Description("Reply, in markdown. With a replacement, a short rationale.")),
+		mcp.WithString("replacement", mcp.Description("Optional. Exact markdown that should replace the thread's anchored text when a human clicks Apply (max 32KB).")),
 	)
 }
 
@@ -462,6 +469,7 @@ func (h *handlers) reply(ctx context.Context, req mcp.CallToolRequest) (*mcp.Cal
 	}
 	cid := req.GetString("comment_id", "")
 	body := req.GetString("body", "")
+	replacement := req.GetString("replacement", "")
 	if cid == "" || body == "" {
 		return errorResult("`comment_id` and `body` are required")
 	}
@@ -469,7 +477,7 @@ func (h *handlers) reply(ctx context.Context, req mcp.CallToolRequest) (*mcp.Cal
 	if err != nil {
 		return errorResult("%s", err.Error())
 	}
-	c, err := h.api.ReplyToComment(ctx, id.User.ID, cid, cleanBody, id.TokenID, id.Label)
+	c, err := h.api.ReplyToComment(ctx, id.User.ID, cid, cleanBody, replacement, id.TokenID, id.Label)
 	if err != nil {
 		return errorResult("%s", err.Error())
 	}
@@ -478,6 +486,9 @@ func (h *handlers) reply(ctx context.Context, req mcp.CallToolRequest) (*mcp.Cal
 		docID = c.DocumentID
 	}
 	h.api.LogTokenAction(ctx, id.TokenID, "reply.create", docID)
+	if replacement != "" {
+		h.api.LogTokenAction(ctx, id.TokenID, "suggestion.create", docID)
+	}
 	return jsonResult(c)
 }
 
