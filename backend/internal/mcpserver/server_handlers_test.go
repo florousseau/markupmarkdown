@@ -201,6 +201,38 @@ func TestReply_Happy(t *testing.T) {
 	}
 }
 
+func TestReply_WithReplacementPassesThroughAndLogs(t *testing.T) {
+	stub := &stubAPI{
+		rateOK: true,
+		repCmt: &models.Comment{ID: "c1", DocumentID: "d", Body: "parent"},
+	}
+	h := &handlers{api: stub}
+	res, _ := h.reply(ctx2(models.TokenScopeWrite), reqWithArgs(map[string]any{
+		"comment_id": "c1", "body": "fix", "replacement": "  exact **markdown**  ",
+	}))
+	if res == nil || res.IsError {
+		t.Fatalf("unexpected result: %+v", res)
+	}
+	// Kept verbatim: the replacement is source text, never trimmed.
+	if stub.lastReplacement != "  exact **markdown**  " {
+		t.Errorf("replacement = %q", stub.lastReplacement)
+	}
+	if stub.lastLog != "suggestion.create" {
+		t.Errorf("suggestion.create not logged: %q", stub.lastLog)
+	}
+}
+
+func TestReply_ReadScopeRefused(t *testing.T) {
+	stub := &stubAPI{rateOK: true}
+	h := &handlers{api: stub}
+	res, _ := h.reply(ctx2(models.TokenScopeRead), reqWithArgs(map[string]any{
+		"comment_id": "c1", "body": "fix", "replacement": "x",
+	}))
+	if res == nil || !res.IsError || stub.replyCalls != 0 {
+		t.Fatalf("read scope must be refused: %+v calls=%d", res, stub.replyCalls)
+	}
+}
+
 func TestReply_MissingArgs(t *testing.T) {
 	stub := &stubAPI{rateOK: true}
 	h := &handlers{api: stub}

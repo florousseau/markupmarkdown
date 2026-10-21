@@ -1,10 +1,11 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { Comment, Reply } from "../types";
 import { colorFor, initials } from "../utils/format";
 import { useAuth } from "../auth";
 import { useDialog } from "./Dialogs";
 import RichBody from "./RichBody";
 import SuggestionBlock from "./SuggestionBlock";
+import { activeSuggestion } from "../utils/suggestions";
 import MentionInput from "./MentionInput";
 import TimeAgo from "./TimeAgo";
 
@@ -26,6 +27,9 @@ interface Props {
   /** Fires when the reviewer clicks "Apply" on a suggestion. Only
    * relevant when comment.suggestion is set and unapplied. */
   onApplySuggestion?: () => Promise<void>;
+  /** Same for a suggestion carried by a reply. Only called for the
+   * thread's active suggestion. */
+  onApplyReplySuggestion?: (replyId: string) => Promise<void>;
 }
 
 function Avatar({
@@ -115,6 +119,7 @@ export default function CommentCard({
   requireIdentity,
   hideQuotedText,
   onApplySuggestion,
+  onApplyReplySuggestion,
 }: Props) {
   const { user } = useAuth();
   const dialog = useDialog();
@@ -123,6 +128,8 @@ export default function CommentCard({
   const [editing, setEditing] = useState(false);
   const [editBody, setEditBody] = useState(comment.body);
   const [busy, setBusy] = useState(false);
+  // The thread's one applicable suggestion (root or reply), if any.
+  const liveSuggestion = activeSuggestion(comment);
   const cardRef = useRef<HTMLDivElement>(null);
 
   // Sidebar scroll-on-activate lives on the parent wrapper in
@@ -276,8 +283,14 @@ export default function CommentCard({
           )}
 
           {/* Suggested change (P0-2). Tracked-changes inline diff with
-              a Result toggle + one-click Apply — see SuggestionBlock. */}
-          <SuggestionBlock comment={comment} onApply={onApplySuggestion} />
+              a Result toggle + one-click Apply — see SuggestionBlock.
+              Only the thread's active suggestion gets Apply. */}
+          <SuggestionBlock
+            anchorExact={comment.anchor.exact}
+            suggestion={comment.suggestion}
+            superseded={liveSuggestion?.replyId !== null}
+            onApply={liveSuggestion?.replyId === null ? onApplySuggestion : undefined}
+          />
         </div>
       </div>
 
@@ -291,6 +304,18 @@ export default function CommentCard({
               mine={Boolean(r.mine)}
               onEdit={(body) => onEditReply(r.id, body)}
               onDelete={() => onDeleteReply(r.id)}
+              suggestion={
+                <SuggestionBlock
+                  anchorExact={comment.anchor.exact}
+                  suggestion={r.suggestion}
+                  superseded={liveSuggestion?.replyId !== r.id}
+                  onApply={
+                    liveSuggestion?.replyId === r.id && onApplyReplySuggestion
+                      ? () => onApplyReplySuggestion(r.id)
+                      : undefined
+                  }
+                />
+              }
             />
           ))}
         </div>
@@ -402,11 +427,14 @@ function ReplyRow({
   mine,
   onEdit,
   onDelete,
+  suggestion,
 }: {
   reply: Reply;
   mine: boolean;
   onEdit: (body: string) => Promise<void>;
   onDelete: () => Promise<void>;
+  /** Rendered SuggestionBlock for this reply's suggestion (if any). */
+  suggestion?: ReactNode;
 }) {
   const dialog = useDialog();
   const [editing, setEditing] = useState(false);
@@ -488,6 +516,7 @@ function ReplyRow({
             <RichBody body={reply.body} />
           </div>
         )}
+        {suggestion}
         {mine && !editing && (
           <div className="flex gap-2 mt-1 text-[11px]">
             <button

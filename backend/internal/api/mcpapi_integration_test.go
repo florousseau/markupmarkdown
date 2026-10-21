@@ -178,7 +178,7 @@ func TestMCPAPI_ReplyToComment(t *testing.T) {
 	doc := testutil.NewTestDocument(t, st, user.ID, "")
 	c := testutil.NewTestComment(t, st, doc.ID, user.ID, "", "")
 
-	got, err := a.ReplyToComment(context.Background(), user.ID, c.ID, "a reply", rec.ID, "L")
+	got, err := a.ReplyToComment(context.Background(), user.ID, c.ID, "a reply", "", rec.ID, "L")
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -194,7 +194,7 @@ func TestMCPAPI_ReplyToComment(t *testing.T) {
 
 func TestMCPAPI_ReplyToComment_NotFound(t *testing.T) {
 	_, _, a := newTestServer(t)
-	if _, err := a.ReplyToComment(context.Background(), "u", "no-such", "x", "t", "L"); err == nil {
+	if _, err := a.ReplyToComment(context.Background(), "u", "no-such", "x", "", "t", "L"); err == nil {
 		t.Fatal("expected error")
 	}
 }

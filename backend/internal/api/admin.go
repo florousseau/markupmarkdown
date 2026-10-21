@@ -131,10 +131,18 @@ func (a *API) adminOverviewHandler(w http.ResponseWriter, r *http.Request) {
 		bson.M{"state": string(models.ReviewStateChangesRequested)})
 	ov.ReviewsCommented, _ = a.store.Reviews().CountDocuments(ctx,
 		bson.M{"state": string(models.ReviewStateCommented)})
+	// Counted per thread: a suggestion lives on the root comment or on
+	// one of its replies.
 	ov.SuggestionsMade, _ = a.store.Comments().CountDocuments(ctx,
-		bson.M{"suggestion": bson.M{"$exists": true}})
+		bson.M{"$or": bson.A{
+			bson.M{"suggestion": bson.M{"$exists": true}},
+			bson.M{"replies.suggestion": bson.M{"$exists": true}},
+		}})
 	ov.SuggestionsUsed, _ = a.store.Comments().CountDocuments(ctx,
-		bson.M{"suggestion.applied_at": bson.M{"$exists": true}})
+		bson.M{"$or": bson.A{
+			bson.M{"suggestion.applied_at": bson.M{"$exists": true}},
+			bson.M{"replies.suggestion.applied_at": bson.M{"$exists": true}},
+		}})
 
 	// Docs created per day, last 30 days.
 	since := now.AddDate(0, 0, -30)

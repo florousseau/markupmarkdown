@@ -1,40 +1,56 @@
 import { useMemo, useState } from "react";
 import { inlineWordDiff } from "../utils/diff";
-import type { Comment } from "../types";
+import type { Suggestion } from "../types";
 
-/** The suggested-change card inside a comment (P0-2, upgraded).
- * Default view is a tracked-changes inline diff — removed words in
- * red strikethrough, added words in green — so the reviewer reads
- * the change in one pass instead of eyeballing two blocks. A toggle
- * flips to the clean "result" text. Apply is one click, per Brown &
- * Parnin's actionability finding. */
+/** The suggested-change card inside a comment or a reply (P0-2,
+ * upgraded). Default view is a tracked-changes inline diff — removed
+ * words in red strikethrough, added words in green — so the reviewer
+ * reads the change in one pass instead of eyeballing two blocks. A
+ * toggle flips to the clean "result" text. Apply is one click, per
+ * Brown & Parnin's actionability finding.
+ *
+ * `anchorExact` is the thread ROOT's anchored text: a reply's
+ * suggestion replaces it too. Three states: active (Apply shown when
+ * `onApply` is given — the parent passes it only to viewers allowed to
+ * apply), superseded by a newer suggestion in the thread (dimmed, no
+ * Apply), applied (marked as such). */
 export default function SuggestionBlock({
-  comment,
+  anchorExact,
+  suggestion,
+  superseded = false,
   onApply,
 }: {
-  comment: Comment;
+  anchorExact: string;
+  suggestion?: Suggestion;
+  superseded?: boolean;
   onApply?: () => Promise<void>;
 }) {
   const [view, setView] = useState<"diff" | "result">("diff");
   const [applying, setApplying] = useState(false);
-  const suggestion = comment.suggestion;
 
   const segments = useMemo(
     () =>
-      suggestion
-        ? inlineWordDiff(comment.anchor.exact, suggestion.replacement)
-        : [],
-    [comment.anchor.exact, suggestion]
+      suggestion ? inlineWordDiff(anchorExact, suggestion.replacement) : [],
+    [anchorExact, suggestion]
   );
 
-  if (!suggestion || !comment.anchor.exact) return null;
+  if (!suggestion || !anchorExact) return null;
   const applied = Boolean(suggestion.appliedAt);
+  const isSuperseded = !applied && superseded;
 
   return (
-    <div className="mt-3 rounded-md border border-rule bg-soft overflow-hidden">
+    <div
+      className={
+        "mt-3 rounded-md border border-rule bg-soft overflow-hidden" +
+        (isSuperseded ? " opacity-60" : "")
+      }
+      data-suggestion-state={
+        applied ? "applied" : isSuperseded ? "superseded" : "active"
+      }
+    >
       <div className="flex items-center justify-between px-3 py-1.5 border-b border-rule">
         <span className="text-[11px] uppercase tracking-wide text-muted">
-          Suggested change
+          {isSuperseded ? "Superseded suggestion" : "Suggested change"}
         </span>
         {!applied && (
           <div className="flex text-[11px] rounded overflow-hidden border border-rule">
@@ -89,6 +105,14 @@ export default function SuggestionBlock({
             ✓ Applied
             {suggestion.appliedBy ? ` by ${suggestion.appliedBy}` : ""}
           </span>
+        ) : isSuperseded ? (
+          <span className="text-xs text-muted">
+            A newer suggestion in this thread replaces this one.
+          </span>
+        ) : !onApply ? (
+          <span className="text-xs text-muted">
+            Sign in to apply this suggestion.
+          </span>
         ) : (
           <>
             <span className="text-xs text-muted">
@@ -105,7 +129,7 @@ export default function SuggestionBlock({
                   setApplying(false);
                 }
               }}
-              disabled={applying || !onApply}
+              disabled={applying}
               className="shrink-0 text-xs px-2.5 py-1 rounded bg-accent text-accent-fg hover:opacity-90 disabled:opacity-50"
             >
               {applying ? "Applying…" : "Apply"}

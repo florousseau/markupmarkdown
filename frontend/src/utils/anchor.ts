@@ -5,7 +5,16 @@ export interface AnchorSpec {
   start: number;
   end: number;
   exact: string;
+  /** A few characters of rendered text before / after the selection.
+   * They tell repeated passages apart — the server uses them to apply
+   * a suggestion to the right occurrence (backend anchorresolve.go). */
+  prefix?: string;
+  suffix?: string;
 }
+
+/** How much rendered text around a selection is captured as
+ * prefix / suffix. Mirrors anchorContextLen in the backend. */
+export const ANCHOR_CONTEXT_LEN = 32;
 
 export interface HighlightRange {
   id: string;
@@ -17,6 +26,10 @@ export interface HighlightRange {
   // character offsets. When start == end == 0 and exact is set, the
   // renderer resolves it against the live textContent.
   exact?: string;
+  // Captured context, used to pick the right occurrence when `exact`
+  // appears several times.
+  prefix?: string;
+  suffix?: string;
 }
 
 function getTextOffset(
@@ -83,7 +96,64 @@ export function getSelectionAnchor(container: HTMLElement): AnchorSpec | null {
   const exact = sel.toString();
   if (!exact || exact.trim() === "") return null;
 
-  return { start, end, exact };
+  const text = container.textContent ?? "";
+  const prefix = text.slice(Math.max(0, start - ANCHOR_CONTEXT_LEN), start);
+  const suffix = text.slice(end, end + ANCHOR_CONTEXT_LEN);
+  return { start, end, exact, prefix, suffix };
+}
+
+/** Start offsets of the non-overlapping occurrences of needle in hay,
+ * left to right (same counting rule as the backend). */
+export function occurrenceOffsets(hay: string, needle: string): number[] {
+  const out: number[] = [];
+  if (!needle) return out;
+  let i = 0;
+  for (;;) {
+    const j = hay.indexOf(needle, i);
+    if (j < 0) return out;
+    out.push(j);
+    i = j + needle.length;
+  }
+}
+
+/** Removes whitespace — rendered textContent and the server's plain
+ * text disagree on newlines between blocks. */
+export const squashSpace = (s: string) => s.replace(/\s+/g, "");
+
+/** Keeps letters and digits only — for matching rendered-text context
+ * against markdown SOURCE, where markers (`**`, `[`, `#`) sit in between. */
+export const lettersAndDigits = (s: string) =>
+  s.replace(/[^\p{L}\p{N}]+/gu, "");
+
+/** Returns the offset (from offs) of the single occurrence whose
+ * surroundings match prefix / suffix under `norm`, or -1 when none or
+ * several match, or when there is no context to compare. */
+export function pickOccurrenceByContext(
+  hay: string,
+  offs: number[],
+  needleLen: number,
+  prefix: string | undefined,
+  suffix: string | undefined,
+  norm: (s: string) => string
+): number {
+  const pre = norm(prefix ?? "");
+  const suf = norm(suffix ?? "");
+  if (!pre && !suf) return -1;
+  let found = -1;
+  for (const p of offs) {
+    if (pre) {
+      const lo = Math.max(0, p - 4 * (prefix ?? "").length - 64);
+      if (!norm(hay.slice(lo, p)).endsWith(pre)) continue;
+    }
+    if (suf) {
+      const end = p + needleLen;
+      const hi = end + 4 * (suffix ?? "").length + 64;
+      if (!norm(hay.slice(end, hi)).startsWith(suf)) continue;
+    }
+    if (found >= 0) return -1;
+    found = p;
+  }
+  return found;
 }
 
 function inMermaidHost(node: Node): boolean {
@@ -124,9 +194,12 @@ export function applyHighlights(
   }
 }
 
-// resolveTextAnchor walks the container's textContent and returns the first
-// occurrence of r.exact, mapping it back to a [start, end] character range.
-// Used for comments created by agents via MCP (text-substring anchoring).
+// resolveTextAnchor walks the container's textContent and returns the
+// occurrence of r.exact designated by the anchor's prefix / suffix (the
+// first one when there's no context or it doesn't settle it), mapping
+// it back to a [start, end] character range. Used for comments created
+// by agents via MCP and for comments carried to a new revision, whose
+// offsets are zeroed.
 function resolveTextAnchor(
   container: HTMLElement,
   r: HighlightRange
@@ -139,8 +212,15 @@ function resolveTextAnchor(
   while ((cur = walker.nextNode())) {
     combined += cur.textContent ?? "";
   }
-  const idx = combined.indexOf(needle);
-  if (idx < 0) return { ...r, start: 0, end: 0 };
+  const offs = occurrenceOffsets(combined, needle);
+  if (offs.length === 0) return { ...r, start: 0, end: 0 };
+  let idx = offs[0];
+  if (offs.length > 1) {
+    const picked = pickOccurrenceByContext(
+      combined, offs, needle.length, r.prefix, r.suffix, squashSpace
+    );
+    if (picked >= 0) idx = picked;
+  }
   return { ...r, start: idx, end: idx + needle.length };
 }
 

@@ -457,10 +457,15 @@ PATCH  /api/comments/:id                        { body }
 DELETE /api/comments/:id
 POST   /api/comments/:id/resolve                { author }
 POST   /api/comments/:id/reopen
-PATCH  /api/comments/:id/anchor                 { start, end, exact } or { docLevel:true }
-POST   /api/comments/:id/replies                { body, author }
+PATCH  /api/comments/:id/anchor                 { start, end, exact, prefix?, suffix? } or { docLevel:true }
+POST   /api/comments/:id/replies                { body, author, suggestion?: { replacement } }
 PATCH  /api/comments/:id/replies/:replyId       { body }
 DELETE /api/comments/:id/replies/:replyId
+
+# Suggested changes (applying is browser-session only; tokens get 403)
+POST   /api/comments/:id/apply-suggestion                    apply the root comment's suggestion
+POST   /api/comments/:id/replies/:replyId/apply-suggestion   apply a reply's suggestion
+POST   /api/documents/:id/apply-suggestions                  apply every open thread's active suggestion
 
 # Auth + identity
 GET    /api/auth/config                         { githubEnabled, githubClientId }

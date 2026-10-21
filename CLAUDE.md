@@ -236,15 +236,22 @@ Three push gates fire from these primitives ([pushback.go](backend/internal/api/
 
 ### 16. Agent revisions are proposed, not accepted, until a human says so
 
-Any revision written under a Bearer token — via `edit_document`, `revise_with_ai accept=true`, `merge_from_github`, or `apply_suggestion` — lands with `revision_meta.actor_kind = "agent"` and `accepted_at = nil`. `POST /api/documents/:id/accept-revision` ([accept_revision.go](backend/internal/api/accept_revision.go)) is the one path to stamp it accepted. **The endpoint refuses Bearer-authed callers** — cookie sessions only, so a leaked token can't self-accept its own revision.
+Any revision written under a Bearer token — via `edit_document`, `revise_with_ai accept=true`, or `merge_from_github` — lands with `revision_meta.actor_kind = "agent"` and `accepted_at = nil`. `POST /api/documents/:id/accept-revision` ([accept_revision.go](backend/internal/api/accept_revision.go)) is the one path to stamp it accepted. **The endpoint refuses Bearer-authed callers** — cookie sessions only, so a leaked token can't self-accept its own revision.
 
 Human-authored revisions and already-accepted revisions no-op through this handler (return the doc unchanged), so the frontend can call it uniformly without inspecting the actor kind.
 
 ### 17. Suggested changes are structured, not prose
 
-Comments MAY carry a `suggestion: { replacement }` field ([suggestions.go](backend/internal/api/suggestions.go)). The comment card renders the replacement in a mono block + an Apply button. `POST /api/comments/:id/apply-suggestion` creates a manual revision that replaces `comment.anchor.exact` with `suggestion.replacement`, then resolves the comment. Doc-level comments (no anchor) can't carry suggestions — there's nothing to replace. Reject no-op replacements (`replacement == anchor.exact`) and already-applied suggestions.
+Comments MAY carry a `suggestion: { replacement }` field ([suggestions.go](backend/internal/api/suggestions.go)) — on the root comment (`add_suggestion`) or on a reply (`reply` + `replacement` over MCP, `createReply` with `suggestion` over REST). Either way the replacement targets the ROOT comment's `anchor.exact`. The card renders it as a diff + an Apply button. `POST /api/comments/:id/apply-suggestion` (root) and `POST /api/comments/:id/replies/:replyId/apply-suggestion` (reply) create a manual revision that replaces the anchored span, then resolve the thread. Doc-level, orphaned and (for new reply suggestions) resolved threads can't carry one. Reject no-op replacements and already-applied suggestions.
 
-When agents want to propose a specific concrete edit, they should use the `add_suggestion` MCP tool (which is `add_comment` + suggestion stamping in one atomic call) rather than free-form prose.
+Invariants:
+
+- **One active suggestion per thread**: the newest unapplied one (root or reply), computed at read time (`markSuggestionStates` → `active` / `superseded`, never stored). Superseded suggestions are refused with 409. Every read path that returns comments must call it.
+- **Apply at the anchored occurrence, never the first match.** `resolveAnchorInSource` ([anchorresolve.go](backend/internal/api/anchorresolve.go)) disambiguates repeated text with the anchor's `prefix`/`suffix` (captured at creation in rendered-text space) or exact `start`/`end`, and refuses (409) when it can't tell. `start`/`end` are rendered-text offsets, not source offsets — don't use them to slice the markdown.
+- **Applying is cookie-session only** (both endpoints + `apply-suggestions`): any Bearer token gets 403. Agents propose, humans apply.
+- **Carry-forward keeps suggestions** (`buildCarriedComment` → `cloneSuggestion`). Dropping them loses every open suggestion on each new revision.
+
+When agents want to propose a specific concrete edit: `reply` + `replacement` when answering an existing human thread, `add_suggestion` for a new issue — never free-form prose.
 
 ### 18. Drift banners respect the whole chain
 
