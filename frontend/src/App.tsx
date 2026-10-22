@@ -4,6 +4,7 @@ import AdminPage from "./pages/Admin";
 import DocumentPage from "./pages/Document";
 import IndexPage from "./pages/Index";
 import GitHubResolve from "./pages/GitHubResolve";
+import DocLinkResolve from "./pages/DocLinkResolve";
 import AuthorBadge from "./components/AuthorBadge";
 import ThemeToggle from "./components/ThemeToggle";
 import NotificationBell from "./components/NotificationBell";
@@ -33,6 +34,7 @@ export default function App() {
         <Routes>
           <Route path="/" element={<HomePage />} />
           <Route path="/d/:id" element={<DocumentPage />} />
+          <Route path="/d/:id/link/*" element={<DocLinkResolve />} />
           <Route path="/i/:id" element={<IndexPage />} />
           <Route path="/admin" element={<AdminPage />} />
           {/* Human-readable GitHub URL routes. Ordered most-specific

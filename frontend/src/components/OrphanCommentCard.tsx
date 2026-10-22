@@ -3,7 +3,6 @@ import CommentCard from "./CommentCard";
 
 interface Props {
   comment: Comment;
-  me: string;
   /** Called when the user wants to enter manual re-anchor mode for
    * this comment. The parent enters a doc-wide selection mode and
    * commits via the SelectionPopover. */
@@ -85,7 +84,6 @@ export default function OrphanCommentCard(props: Props) {
       <CommentCard
         comment={comment}
         active={false}
-        me={props.me}
         onActivate={() => {}}
         onResolve={props.onResolve}
         onReopen={props.onReopen}

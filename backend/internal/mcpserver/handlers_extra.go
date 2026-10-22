@@ -227,7 +227,7 @@ func addSuggestionTool() mcp.Tool {
 	return mcp.NewTool("add_suggestion",
 		mcp.WithDescription(`Leave a review comment that carries a structured edit proposal — "replace this anchored text with THIS." Reviewers see a one-click Apply button. Applying it creates a manual revision + resolves the comment.
 
-Prefer this over add_comment when you have a specific concrete replacement in mind. Empirically the highest-actionability review artifact (Brown & Parnin ESEC/FSE '20). Anchor rules are identical to add_comment: 'quoted_text' must appear verbatim; use 'occurrence' (1-based) to disambiguate multi-match cases.
+Prefer this over add_comment when you have a specific concrete replacement in mind. To answer a change request a human already left, DON'T open a new thread with this tool — use reply with 'replacement' in their thread. Empirically the highest-actionability review artifact (Brown & Parnin ESEC/FSE '20). Anchor rules are identical to add_comment: 'quoted_text' must appear verbatim; use 'occurrence' (1-based) to disambiguate multi-match cases.
 
 Constraints: 'replacement' must be non-empty AND different from 'quoted_text' (a no-op suggestion is rejected).`),
 		mcp.WithString("document_id", mcp.Required(), mcp.Description("Document UUID.")),

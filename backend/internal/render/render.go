@@ -8,6 +8,7 @@ package render
 
 import (
 	"bytes"
+	"regexp"
 	"strings"
 
 	"github.com/microcosm-cc/bluemonday"
@@ -98,6 +99,47 @@ func PlainText(source string) string {
 		return ast.WalkContinue, nil
 	})
 	return sb.String()
+}
+
+// rawHref matches href attributes in raw HTML (`<a href="X.md">`), which
+// the frontend renders (rehype-raw) as clickable links too.
+var rawHref = regexp.MustCompile(`(?i)\bhref\s*=\s*(?:"([^"]*)"|'([^']*)')`)
+
+// LinkDestinations returns the destination of every link in markdown
+// source, in document order: inline and reference-style links plus
+// href attributes in raw HTML. Autolinks are absolute by construction
+// and left out. Used to check a link was actually written in a doc
+// before following it (see api.resolveUploadLink).
+func LinkDestinations(source string) []string {
+	src := []byte(source)
+	root := mdComment.Parser().Parse(text.NewReader(src))
+	var out []string
+	addRaw := func(b []byte) {
+		for _, m := range rawHref.FindAllSubmatch(b, -1) {
+			out = append(out, string(m[1])+string(m[2]))
+		}
+	}
+	_ = ast.Walk(root, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
+		if !entering {
+			return ast.WalkContinue, nil
+		}
+		switch v := n.(type) {
+		case *ast.Link:
+			out = append(out, string(v.Destination))
+		case *ast.RawHTML:
+			for i := 0; i < v.Segments.Len(); i++ {
+				seg := v.Segments.At(i)
+				addRaw(seg.Value(src))
+			}
+		case *ast.HTMLBlock:
+			for i := 0; i < v.Lines().Len(); i++ {
+				line := v.Lines().At(i)
+				addRaw(line.Value(src))
+			}
+		}
+		return ast.WalkContinue, nil
+	})
+	return out
 }
 
 // FindOccurrence returns the start and end byte offsets of the nth (1-based)

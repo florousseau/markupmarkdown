@@ -148,3 +148,16 @@ func TestCountOccurrences(t *testing.T) {
 		}
 	}
 }
+
+func TestLinkDestinations(t *testing.T) {
+	src := "See [a](AUTRE.md#s) and [b][ref], <https://example.com/x.md>.\n\n" +
+		"Inline <a href=\"inline.md\">x</a>.\n\n" +
+		"<div><a href='block.md'>y</a></div>\n\n" +
+		"```\n[not](code.md)\n```\n\n" +
+		"[ref]: ./ref.md\n"
+	got := LinkDestinations(src)
+	want := []string{"AUTRE.md#s", "./ref.md", "inline.md", "block.md"}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Errorf("LinkDestinations = %q, want %q", got, want)
+	}
+}

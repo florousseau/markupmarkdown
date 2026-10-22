@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -1858,6 +1859,47 @@ func (s *Store) FindLatestDocumentBySource(ctx context.Context, owner, repo, ref
 	return &doc, nil
 }
 
+// FindLatestUploadByFilename returns the most recently updated chain
+// root uploaded by creatorID whose original file name is `filename`
+// (case-insensitive). Uploads that predate the upload_filename field
+// match on title instead: the upload form derived the title from the
+// file name minus a trailing ".md", so `titles` carries both spellings.
+// Returns (nil, nil) when nothing matches.
+func (s *Store) FindLatestUploadByFilename(ctx context.Context, creatorID, filename string, titles []string) (*models.Document, error) {
+	if creatorID == "" || filename == "" {
+		return nil, nil
+	}
+	exactCI := func(v string) bson.M {
+		return bson.M{"$regex": "^" + regexp.QuoteMeta(v) + "$", "$options": "i"}
+	}
+	or := bson.A{bson.M{"upload_filename": exactCI(filename)}}
+	for _, t := range titles {
+		if t == "" {
+			continue
+		}
+		or = append(or, bson.M{
+			"upload_filename": bson.M{"$exists": false},
+			"title":           exactCI(t),
+		})
+	}
+	filter := bson.M{
+		"created_by_id": creatorID,
+		"origin":        "upload",
+		"deleted_at":    bson.M{"$exists": false},
+		"parent_id":     bson.M{"$exists": false}, // chain roots only; caller walks to leaf
+		"$or":           or,
+	}
+	opts := options.FindOne().SetSort(bson.D{{Key: "updated_at", Value: -1}})
+	var doc models.Document
+	if err := s.Documents().FindOne(ctx, filter, opts).Decode(&doc); err != nil {
+		if errors.Is(err, mongo.ErrNoDocuments) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &doc, nil
+}
+
 func (s *Store) UpdateDocumentTitle(ctx context.Context, id, title string) error {
 	_, err := s.Documents().UpdateOne(ctx, bson.M{"_id": id}, bson.M{
 		"$set": bson.M{"title": title, "updated_at": time.Now().UTC()},
@@ -2019,6 +2061,34 @@ func (s *Store) UpdateComment(ctx context.Context, id string, set bson.M) (*mode
 		return nil, err
 	}
 	return s.GetComment(ctx, id)
+}
+
+// ResolveOpenComments marks every unresolved comment on docID as
+// resolved by `by` at `at`, in one UpdateMany. Returns how many changed.
+func (s *Store) ResolveOpenComments(ctx context.Context, docID, by string, at time.Time) (int64, error) {
+	res, err := s.Comments().UpdateMany(ctx,
+		bson.M{"document_id": docID, "resolved": bson.M{"$ne": true}},
+		bson.M{"$set": bson.M{
+			"resolved":    true,
+			"resolved_by": by,
+			"resolved_at": at,
+			"updated_at":  at,
+		}},
+	)
+	if err != nil {
+		return 0, err
+	}
+	return res.ModifiedCount, nil
+}
+
+// DeleteCommentsForDocument hard-deletes every comment (and with it
+// every reply) on docID. Returns how many were removed.
+func (s *Store) DeleteCommentsForDocument(ctx context.Context, docID string) (int64, error) {
+	res, err := s.Comments().DeleteMany(ctx, bson.M{"document_id": docID})
+	if err != nil {
+		return 0, err
+	}
+	return res.DeletedCount, nil
 }
 
 func (s *Store) DeleteComment(ctx context.Context, id string) error {

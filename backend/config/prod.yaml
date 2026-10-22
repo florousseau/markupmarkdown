@@ -18,7 +18,10 @@ github:
   client_id: ${GITHUB_CLIENT_ID:}
   client_secret: ${GITHUB_CLIENT_SECRET:}
   callback_url: ${GITHUB_CALLBACK_URL:https://markupmarkdown.fly.dev/api/auth/github/callback}
-  scope: ${GITHUB_SCOPE:read:user user:email repo}
+  # Identity-only by default: sign-in never asks for repository access.
+  # Set GITHUB_SCOPE="read:user user:email repo" to re-enable private-repo
+  # import and Push to GitHub (the SPA shows Push only when repo is granted).
+  scope: ${GITHUB_SCOPE:read:user user:email}
 
 encryption:
   master_key: ${MARKUPMARKDOWN_ENCRYPTION_KEY:}

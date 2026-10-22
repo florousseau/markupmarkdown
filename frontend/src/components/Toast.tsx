@@ -89,6 +89,12 @@ export function useToast(): ToastAPI {
   return v;
 }
 
+/** useToast for components that may also render outside the provider
+ *  (unit tests mounting them alone). */
+export function useOptionalToast(): ToastAPI | null {
+  return useContext(ToastContext);
+}
+
 function ToastItemView({
   item,
   onDismiss,

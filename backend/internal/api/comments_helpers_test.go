@@ -49,7 +49,7 @@ func TestMarkMine_NoOpWithoutViewer(t *testing.T) {
 	comments := []models.Comment{
 		{ID: "c1", AuthorID: "u1"},
 	}
-	markMine(comments, "")
+	markMine(comments, "", "")
 	if comments[0].Mine {
 		t.Fatal("Mine should not be set when viewerID is empty")
 	}
@@ -60,7 +60,7 @@ func TestMarkMine_SetsForViewer(t *testing.T) {
 		{ID: "c1", AuthorID: "u1", Replies: []models.Reply{{ID: "r1", AuthorID: "u1"}, {ID: "r2", AuthorID: "u2"}}},
 		{ID: "c2", AuthorID: "u2", Replies: []models.Reply{{ID: "r3", AuthorID: "u1"}}},
 	}
-	markMine(comments, "u1")
+	markMine(comments, "u1", "")
 	if !comments[0].Mine {
 		t.Error("c1 should be mine for u1")
 	}

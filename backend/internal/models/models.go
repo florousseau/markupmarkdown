@@ -89,6 +89,13 @@ type Document struct {
 	// ListDocumentsForUser to scope the home-page list to docs you worked on.
 	CreatedByID string `bson:"created_by_id,omitempty" json:"-"`
 
+	// UploadFilename is the original file name of an uploaded doc
+	// (e.g. "SPEC.md"). Lets a relative link like `[x](SPEC.md#s)` in
+	// another upload by the same creator resolve to this doc — see
+	// resolveUploadLink. Empty for URL ingests and pre-field uploads
+	// (those fall back to a title match).
+	UploadFilename string `bson:"upload_filename,omitempty" json:"uploadFilename,omitempty"`
+
 	// DeletedAt is set when the doc enters soft-deleted state. The doc
 	// stays in MongoDB for ~30 days so the user can restore it from the
 	// Trash view; after that a background sweep will purge it.
@@ -532,6 +539,13 @@ type Anchor struct {
 	Start int    `bson:"start" json:"start"`
 	End   int    `bson:"end" json:"end"`
 	Exact string `bson:"exact" json:"exact"`
+	// Prefix / Suffix are a few characters of PLAIN TEXT (rendered
+	// textContent for UI selections, goldmark PlainText for MCP) around
+	// the anchored span, captured at creation. They disambiguate which
+	// occurrence of Exact the comment means when Exact appears more
+	// than once — Start/End live in the rendered coordinate space and
+	// are zeroed on carry-forward, so they can't do that on their own.
+	// Empty on comments created before they were captured.
 	Prefix string `bson:"prefix,omitempty" json:"prefix,omitempty"`
 	Suffix string `bson:"suffix,omitempty" json:"suffix,omitempty"`
 }
@@ -562,6 +576,12 @@ type Reply struct {
 	OwnerLogin string `bson:"-" json:"ownerLogin,omitempty"`
 	Body            string    `bson:"body" json:"body"`
 	BodyHTML        string    `bson:"-" json:"bodyHtml,omitempty"`
+	// Suggestion is an optional structured edit proposal made IN the
+	// thread. It always targets the ROOT comment's Anchor.Exact — a
+	// reply has no anchor of its own. Threads that are doc-level,
+	// orphaned or resolved can't receive one. See Suggestion.Active
+	// for which of a thread's suggestions is currently applicable.
+	Suggestion *Suggestion `bson:"suggestion,omitempty" json:"suggestion,omitempty"`
 	// Mine is computed at read time: true when the viewer is the human
 	// behind this reply — either as the direct author or as the owner of
 	// the bot/token that wrote it. Drives the edit/delete affordances in
@@ -622,9 +642,9 @@ type Comment struct {
 	UpdatedAt  time.Time `bson:"updated_at" json:"updatedAt"`
 }
 
-// Suggestion is a structured edit proposal on an anchored comment.
-// Replacement is the text that should replace the comment's Anchor.Exact
-// span in the source markdown. AppliedAt / AppliedByID / AppliedBy are
+// Suggestion is a structured edit proposal on an anchored thread (root
+// comment or reply). Replacement is the text that should replace the
+// root comment's Anchor.Exact span in the source markdown. AppliedAt / AppliedByID / AppliedBy are
 // stamped when a reviewer clicks Apply, so subsequent viewers can see
 // the suggestion was already used.
 type Suggestion struct {
@@ -633,4 +653,12 @@ type Suggestion struct {
 	AppliedByID   string     `bson:"applied_by_id,omitempty" json:"-"`
 	AppliedBy     string     `bson:"applied_by,omitempty" json:"appliedBy,omitempty"`
 	AppliedDocID  string     `bson:"applied_doc_id,omitempty" json:"appliedDocId,omitempty"`
+	// Active / Superseded are computed at read time, never stored
+	// (see markSuggestionStates in the api package). A thread has at
+	// most ONE active suggestion: the most recent unapplied one across
+	// the root comment and its replies. Older unapplied ones are
+	// superseded — rendered dimmed, and refused by the apply endpoints.
+	// Applied suggestions are neither.
+	Active     bool `bson:"-" json:"active,omitempty"`
+	Superseded bool `bson:"-" json:"superseded,omitempty"`
 }

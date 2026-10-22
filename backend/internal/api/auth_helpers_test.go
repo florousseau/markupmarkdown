@@ -73,3 +73,18 @@ func TestContextDetached_HasTimeout(t *testing.T) {
 		t.Fatal("contextDetached should carry a deadline")
 	}
 }
+
+func TestScopeGrantsRepoWrite(t *testing.T) {
+	cases := map[string]bool{
+		"read:user user:email repo": true,
+		"read:user,public_repo":     true,
+		"read:user user:email":      false,
+		"repo:status read:user":     false,
+		"":                          false,
+	}
+	for scope, want := range cases {
+		if got := scopeGrantsRepoWrite(scope); got != want {
+			t.Errorf("scopeGrantsRepoWrite(%q) = %v, want %v", scope, got, want)
+		}
+	}
+}
